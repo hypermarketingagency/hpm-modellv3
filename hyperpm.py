@@ -12,7 +12,7 @@ except ImportError:
 import io
 
 # ============================================================================
-# 🎨 HYPER App - Neuromarketing ROAS Predictor v4.1
+# 🎨 HYPER App - Neuromarketing ROAS Predictor v4.2
 # FÁZIS 1: CSV Importer & Intelligent Mapper
 # ============================================================================
 
@@ -24,7 +24,7 @@ st.set_page_config(
 )
 
 # ============================================================================
-# 📊 CONFIG & SCHEMA (v4.1 – véglegesen rögzített)
+# 📊 CONFIG & SCHEMA (v4.2 – eredmények típus hozzáadva)
 # ============================================================================
 
 UNIFIED_SCHEMA = {
@@ -47,6 +47,7 @@ UNIFIED_SCHEMA = {
         ("roas", "float", "ROAS (x)"),
         ("reach", "int", "Elérés"),
         ("frequency", "float", "Gyakoriság"),
+        ("results", "string", "Eredmények típusa (vásárlások/kattintások/stb)"),
         ("add_to_cart", "int", "Kosárba helyezések (darabszám)"),
         ("add_to_cart_cost", "float", "Kosárba helyezés egységnyi költsége (HUF)"),
         ("add_to_cart_value", "float", "Kosárba helyezések konverziós értéke (HUF)"),
@@ -219,6 +220,20 @@ def normalize_data(df, mapping, user_adjustments=None, platform_hint=None):
 
     if "platform" not in normalized_df.columns:
         normalized_df["platform"] = platform_hint if platform_hint else "Unknown"
+
+    # ÚJ: Eredmények típusa kitöltés
+    # Ha van conversions érték, az "Vásárlások", ha van add_to_cart, az "Kosárba helyezések", stb.
+    if "results" not in normalized_df.columns:
+        normalized_df["results"] = normalized_df.apply(
+            lambda row: (
+                "Vásárlások" if not pd.isna(row.get("conversions")) and row.get("conversions", 0) > 0
+                else "Kosárba helyezések" if not pd.isna(row.get("add_to_cart")) and row.get("add_to_cart", 0) > 0
+                else "Kattintások" if not pd.isna(row.get("clicks")) and row.get("clicks", 0) > 0
+                else "Megtekintések" if not pd.isna(row.get("video_views")) and row.get("video_views", 0) > 0
+                else "Ismeretlen"
+            ),
+            axis=1
+        )
 
     # Számított mezők
     if "spend" in normalized_df.columns and "conversion_value" in normalized_df.columns:
@@ -475,6 +490,14 @@ with tab3:
                     lambda x: "" if pd.isna(x) else f"{x:.4f}"
                 )
 
+            # Oszlopok átrendezése: "results" az "add_to_cart" elé
+            column_order = [
+                "date_start", "campaign_name", "campaign_status", "impressions", "reach",
+                "results", "add_to_cart", "roas", "frequency", "platform", "spend (HUF)",
+                "cpc (HUF)", "cpa (HUF, számított)", "conv_cost (HUF)",
+                "add_to_cart_cost (HUF)", "ctr_percent (%)"
+            ]
+            
             huf_cols = {
                 "spend": "spend (HUF)",
                 "conversion_value": "conversion_value (HUF)",
@@ -492,6 +515,16 @@ with tab3:
             if "ctr_percent" in df_display.columns:
                 df_display["ctr_percent (%)"] = df_display["ctr_percent"].apply(fmt_ctr)
                 del df_display["ctr_percent"]
+
+            # Konverziók megjelenítése
+            if "conversions" in df_display.columns:
+                df_display["conversions_value (HUF)"] = df_display["conversions"]
+                del df_display["conversions"]
+
+            # add_to_cart átnevezése
+            if "add_to_cart" in df_display.columns:
+                df_display["add_to_cart_value (HUF)"] = df_display["add_to_cart"]
+                del df_display["add_to_cart"]
 
             st.dataframe(df_display, use_container_width=True)
         except Exception as e:
@@ -532,7 +565,7 @@ with tab4:
 st.divider()
 st.markdown(
     """
-**HYPER App v4.1** | Neuromarketing ROAS Predictor  
+**HYPER App v4.2** | Neuromarketing ROAS Predictor  
 Fázis 1 kész – jöhet a Fázis 2 (Creative Analyzer + ML modell).
 """
 )

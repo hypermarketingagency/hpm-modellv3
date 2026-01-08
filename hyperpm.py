@@ -12,8 +12,8 @@ except ImportError:
 import io
 
 # ============================================================================
-# 🎨 HYPER App - Neuromarketing ROAS Predictor v4.4
-# FÁZIS 1: CSV Importer & Intelligent Mapper
+# 🎨 HYPER App - Neuromarketing ROAS Predictor v4.5
+# FÁZIS 1: CSV Importer & Intelligent Mapper - VÉGLEGESEN HELYES PÁROSÍTÁSOK
 # ============================================================================
 
 st.set_page_config(
@@ -24,7 +24,7 @@ st.set_page_config(
 )
 
 # ============================================================================
-# 📊 CONFIG & SCHEMA (v4.4 – helyes párosítások)
+# 📊 CONFIG & SCHEMA (v4.5 – VÉGLEGESEN JAVÍTOTT)
 # ============================================================================
 
 UNIFIED_SCHEMA = {
@@ -60,7 +60,7 @@ UNIFIED_SCHEMA = {
     ],
 }
 
-# VÉGLEGESEN HELYES Oszlop minták
+# ✅ VÉGLEGESEN JAVÍTOTT COLUMN_PATTERNS – NINCS KONFLIKTUS
 COLUMN_PATTERNS = {
     # Alap paraméterek
     "cpc": ["cpc (összes) (huf)", "cpc (összes)", "cpc", "cost per click"],
@@ -79,28 +79,28 @@ COLUMN_PATTERNS = {
     "campaign_name": ["kampány neve", "campaign name"],
     "campaign_status": ["kampány teljesítése", "status", "állapot"],
     
-    # KRITIKUS: Ezek az egyedi, helyes mapping szabályok
-    # Eredményenkénti költség → conv_cost (NE legyen más!)
+    # ✅ KRITIKUS PÁROSÍTÁSOK - NINCS KETTŐS LEKÉPEZÉS!
+    
+    # 1. Eredményenkénti költség CSAK ide
     "conv_cost": ["eredményenkénti költség", "cost per result"],
     
-    # Vásárlások (darabszám) → conversions (NE legyen conversion_value!)
+    # 2. Vásárlások (darabszám) CSAK ide
     "conversions": ["vásárlások", "konverziók", "purchases", "orders"],
     
-    # Vásárlások konverziós értéke → conversion_value (NE legyen conversions!)
+    # 3. Vásárlások konverziós értéke CSAK ide - NEM conversions!
     "conversion_value": ["vásárlások konverziós értéke", "purchase value"],
     
-    # Kosárba helyezések (darabszám) → add_to_cart (NE legyen add_to_cart_value!)
+    # 4. Kosárba helyezések (darabszám) CSAK ide
     "add_to_cart": ["kosárba helyezések", "add to cart"],
     
-    # Kosárba helyezés egységnyi költsége → add_to_cart_cost
+    # 5. Kosárba helyezés egységnyi költsége CSAK ide
     "add_to_cart_cost": ["kosárba helyezés egységnyi költsége", "cost per add to cart"],
     
-    # Kosárba helyezések konverziós értéke → add_to_cart_value (NE legyen add_to_cart!)
+    # 6. Kosárba helyezések konverziós értéke CSAK ide - NEM add_to_cart!
     "add_to_cart_value": ["kosárba helyezések konverziós értéke", "add to cart value"],
     
-    # Eredmények (az oszlop, amely a Campaign Objective-t/Optimization Goal-t tartalmazza)
-    # De az adatokat a "results" és "results_count" mezőkbe szeretnénk, nem erre
-    # Ezért ez az oszlop nincs párosítva – a kódban számítva lesz
+    # 7. Eredmények típusa - a Campaign Objective
+    "results": ["eredmények", "results"],
 }
 
 # ============================================================================
@@ -108,6 +108,7 @@ COLUMN_PATTERNS = {
 # ============================================================================
 
 def find_matching_column(csv_column, patterns_dict, threshold=80):
+    """Fuzzy matching a CSV oszlop és az Unified Field között."""
     csv_col_lower = csv_column.lower().strip()
     best_match = None
     best_score = 0
@@ -123,6 +124,7 @@ def find_matching_column(csv_column, patterns_dict, threshold=80):
 
 
 def intelligently_map_columns(df_columns):
+    """Automata felismerés az összes oszlophoz."""
     mapping = {}
     unmapped = []
     for col in df_columns:
@@ -135,6 +137,7 @@ def intelligently_map_columns(df_columns):
 
 
 def parse_numeric_value(val):
+    """Szöveg → szám konverzió (HUF, tizedes pont vagy vessző)."""
     if pd.isna(val) or val == "" or val == "–" or val == "--":
         return np.nan
     if isinstance(val, (int, float)):
@@ -152,6 +155,7 @@ def parse_numeric_value(val):
 
 
 def parse_percentage_value(val):
+    """Szöveg → százalék konverzió."""
     if pd.isna(val) or val == "" or val == "–":
         return np.nan
     s = str(val).strip().replace("%", "")
@@ -167,6 +171,7 @@ def parse_percentage_value(val):
 
 
 def parse_date(val):
+    """Szöveg → dátum konverzió."""
     if pd.isna(val):
         return None
     date_formats = [
@@ -188,6 +193,7 @@ def parse_date(val):
 
 
 def normalize_data(df, mapping, user_adjustments=None, platform_hint=None):
+    """Adatok normalizálása az Unified Schema alapján."""
     if user_adjustments:
         mapping = {**mapping, **user_adjustments}
 
@@ -230,10 +236,10 @@ def normalize_data(df, mapping, user_adjustments=None, platform_hint=None):
     if "platform" not in normalized_df.columns:
         normalized_df["platform"] = platform_hint if platform_hint else "Unknown"
 
-    # Intelligens eredménytípus felismerés + darabszám
+    # ✅ INTELLIGENS EREDMÉNYTÍPUS FELISMERÉS
     if "results" not in normalized_df.columns or "results_count" not in normalized_df.columns:
         def determine_results(row):
-            # Prioritás sorrendje: conversions > add_to_cart > clicks > video_views > impressions
+            # Prioritás: conversions > add_to_cart > clicks > video_views > impressions
             if not pd.isna(row.get("conversions")) and row.get("conversions", 0) > 0:
                 return "Vásárlások", int(row.get("conversions", 0))
             elif not pd.isna(row.get("add_to_cart")) and row.get("add_to_cart", 0) > 0:
@@ -280,6 +286,7 @@ def normalize_data(df, mapping, user_adjustments=None, platform_hint=None):
 
 
 def validate_data(df):
+    """Validáció – hibák és figyelmeztetések."""
     issues = []
     mandatory_fields = [f[0] for f in UNIFIED_SCHEMA["mandatory"]]
     for field in mandatory_fields:
@@ -526,21 +533,20 @@ with tab3:
                 df_display["ctr_percent (%)"] = df_display["ctr_percent"].apply(fmt_ctr)
                 del df_display["ctr_percent"]
 
-            # Konverziók megjelenítése
+            # Konverziók átnevezése
             if "conversions" in df_display.columns:
-                df_display["conversions_value (HUF)"] = df_display["conversions"]
+                df_display["conversions (db)"] = df_display["conversions"]
                 del df_display["conversions"]
 
             # add_to_cart átnevezése
             if "add_to_cart" in df_display.columns:
-                df_display["add_to_cart_value (HUF)"] = df_display["add_to_cart"]
+                df_display["add_to_cart (db)"] = df_display["add_to_cart"]
                 del df_display["add_to_cart"]
 
             # Oszlopok sorrendje: results, results_count az elejére
             cols = df_display.columns.tolist()
             new_cols = []
             
-            # Végigmegyünk az oszlopokon és az eleje legyen: results, results_count (db)
             if "results" in cols:
                 new_cols.append("results")
                 cols.remove("results")
@@ -589,7 +595,14 @@ with tab4:
 st.divider()
 st.markdown(
     """
-**HYPER App v4.4** | Neuromarketing ROAS Predictor  
-Fázis 1 kész – jöhet a Fázis 2 (Creative Analyzer + ML modell).
+**HYPER App v4.5** | Neuromarketing ROAS Predictor  
+Fázis 1 kész – jöhet a Fázis 2 (Creative Analyzer + ML modell).  
+
+✅ **v4.5 véglegesen javított párosítások:**
+- `Vásárlások` → `conversions` ✅
+- `Vásárlások konverziós értéke` → `conversion_value` ✅
+- `Kosárba helyezések` → `add_to_cart` ✅
+- `Kosárba helyezések konverziós értéke` → `add_to_cart_value` ✅
+- `Eredményenkénti költség` → `conv_cost` ✅
 """
 )

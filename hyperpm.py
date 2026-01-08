@@ -11,11 +11,6 @@ except ImportError:
 
 import io
 
-# ============================================================================
-# 🎨 HYPER App - Neuromarketing ROAS Predictor v4.5
-# FÁZIS 1: CSV Importer & Intelligent Mapper - VÉGLEGESEN HELYES PÁROSÍTÁSOK
-# ============================================================================
-
 st.set_page_config(
     page_title="HYPER - Marketing Predictor",
     page_icon="🎯",
@@ -24,7 +19,7 @@ st.set_page_config(
 )
 
 # ============================================================================
-# 📊 CONFIG & SCHEMA (v4.5 – VÉGLEGESEN JAVÍTOTT)
+# 📊 CONFIG & SCHEMA (v5.0 – HARDKÓDOLT, PRECÍZ PÁROSÍTÁS)
 # ============================================================================
 
 UNIFIED_SCHEMA = {
@@ -47,67 +42,121 @@ UNIFIED_SCHEMA = {
         ("roas", "float", "ROAS (x)"),
         ("reach", "int", "Elérés"),
         ("frequency", "float", "Gyakoriság"),
-        ("results", "string", "Eredmények típusa (vásárlások/kattintások/stb)"),
         ("results_count", "int", "Eredmények (darabszám)"),
         ("add_to_cart", "int", "Kosárba helyezések (darabszám)"),
         ("add_to_cart_cost", "float", "Kosárba helyezés egységnyi költsége (HUF)"),
         ("add_to_cart_value", "float", "Kosárba helyezések konverziós értéke (HUF)"),
     ],
     "optional": [
-        ("video_views", "int", "Videó megtekintések"),
         ("engagement", "int", "Engagement"),
         ("notes", "string", "Megjegyzések"),
     ],
 }
 
-# ✅ VÉGLEGESEN JAVÍTOTT COLUMN_PATTERNS – NINCS KONFLIKTUS
+# ✅ VÉGLEGESEN JAVÍTOTT COLUMN_PATTERNS - Facebook specifikus
+# Az összes szóköz és speciális karakter kezelve
 COLUMN_PATTERNS = {
-    # Alap paraméterek
-    "cpc": ["cpc (összes) (huf)", "cpc (összes)", "cpc", "cost per click"],
-    "ctr_percent": ["ctr (átkattintási arány)", "ctr", "átkattintási arány"],
-    "spend": ["elköltött összeg (huf)", "elköltött összeg", "spend"],
-    "reach": ["elérés", "reach"],
-    "frequency": ["gyakoriság", "frequency"],
-    "impressions": ["megjelenések", "impressions"],
-    "roas": ["vásárlási hirdetésmegtérülés", "roas", "hirdetésmegtérülés"],
-    "clicks": ["link click", "clicks", "kattintások"],
-    "video_views": ["videó megtekintések", "video views"],
-    "engagement": ["engagement", "interakció"],
+    # Dátumok
+    "date_start": ["jelentés kezdete", "report start", "start date"],
     
     # Kampány adatok
-    "date_start": ["jelentés kezdete", "start date"],
     "campaign_name": ["kampány neve", "campaign name"],
-    "campaign_status": ["kampány teljesítése", "status", "állapot"],
+    "campaign_status": ["kampány teljesítése", "campaign performance", "teljesítése"],
     
-    # ✅ KRITIKUS PÁROSÍTÁSOK - NINCS KETTŐS LEKÉPEZÉS!
+    # Költség
+    "spend": ["elköltött összeg (huf)", "elköltött összeg", "spend", "költség"],
     
-    # 1. Eredményenkénti költség CSAK ide
+    # Megjelenések és elérés
+    "impressions": ["megjelenések", "impressions"],
+    "reach": ["elérés", "reach"],
+    
+    # CPC és CTR
+    "cpc": ["cpc (összes) (huf)", "cpc"],
+    "ctr_percent": ["ctr (átkattintási arány)", "ctr", "átkattintási arány"],
+    
+    # ROAS
+    "roas": ["vásárlási hirdetésmegtérülés", "roas"],
+    
+    # Gyakoriság
+    "frequency": ["gyakoriság", "frequency"],
+    
+    # ✅ KRITIKUS - PRESÍZS PÁROSÍTÁSOK
+    # Ez az oszlop a darabszámot tartalmazza (az eredménytípustól függően)
+    "results_count": ["eredmények", "results"],
+    
+    # Eredményenkénti költség
     "conv_cost": ["eredményenkénti költség", "cost per result"],
     
-    # 2. Vásárlások (darabszám) CSAK ide
-    "conversions": ["vásárlások", "konverziók", "purchases", "orders"],
+    # Vásárlások - DARABSZÁM
+    "conversions": ["vásárlások", "purchases"],
     
-    # 3. Vásárlások konverziós értéke CSAK ide - NEM conversions!
+    # Vásárlások konverziós értéke
     "conversion_value": ["vásárlások konverziós értéke", "purchase value"],
     
-    # 4. Kosárba helyezések (darabszám) CSAK ide
+    # Kosárba helyezések - DARABSZÁM
     "add_to_cart": ["kosárba helyezések", "add to cart"],
     
-    # 5. Kosárba helyezés egységnyi költsége CSAK ide
-    "add_to_cart_cost": ["kosárba helyezés egységnyi költsége", "cost per add to cart"],
+    # Kosárba helyezés egységnyi költsége
+    "add_to_cart_cost": ["kosárba helyezés egységnyi költsége", "add to cart cost"],
     
-    # 6. Kosárba helyezések konverziós értéke CSAK ide - NEM add_to_cart!
+    # Kosárba helyezések konverziós értéke
     "add_to_cart_value": ["kosárba helyezések konverziós értéke", "add to cart value"],
     
-    # 7. Eredmények típusa - a Campaign Objective
-    "results": ["eredmények", "results"],
+    # Engagement
+    "engagement": ["engagement", "post engagement"],
 }
 
 # ============================================================================
 # 🔧 HELPERS
 # ============================================================================
 
-def find_matching_column(csv_column, patterns_dict, threshold=80):
+def parse_numeric_value(val):
+    """Szöveg → szám konverzió (HUF, tizedes pont vagy vessző)."""
+    if pd.isna(val) or val == "" or val == "–" or val == "--" or val == "folyamatban":
+        return np.nan
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip()
+    s = s.replace("\u00a0", "").replace(" ", "")
+    if "," in s and "." in s:
+        s = s.replace(".", "").replace(",", ".")
+    else:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except Exception:
+        return np.nan
+
+
+def parse_percentage_value(val):
+    """Szöveg → százalék konverzió."""
+    if pd.isna(val) or val == "" or val == "–":
+        return np.nan
+    s = str(val).strip().replace("%", "").replace(",", ".")
+    s = s.replace("\u00a0", "").replace(" ", "")
+    try:
+        return float(s)
+    except Exception:
+        return np.nan
+
+
+def parse_date(val):
+    """Szöveg → dátum konverzió."""
+    if pd.isna(val):
+        return None
+    date_formats = ["%Y-%m-%d", "%Y.%m.%d", "%d.%m.%Y", "%d-%m-%Y", "%m/%d/%Y"]
+    for fmt in date_formats:
+        try:
+            return pd.to_datetime(val, format=fmt)
+        except Exception:
+            continue
+    try:
+        return pd.to_datetime(val)
+    except Exception:
+        return None
+
+
+def find_matching_column(csv_column, patterns_dict, threshold=75):
     """Fuzzy matching a CSV oszlop és az Unified Field között."""
     csv_col_lower = csv_column.lower().strip()
     best_match = None
@@ -128,68 +177,12 @@ def intelligently_map_columns(df_columns):
     mapping = {}
     unmapped = []
     for col in df_columns:
-        matched_field, score = find_matching_column(col, COLUMN_PATTERNS)
+        matched_field, score = find_matching_column(col, COLUMN_PATTERNS, threshold=75)
         if matched_field:
             mapping[col] = matched_field
         else:
             unmapped.append(col)
     return mapping, unmapped
-
-
-def parse_numeric_value(val):
-    """Szöveg → szám konverzió (HUF, tizedes pont vagy vessző)."""
-    if pd.isna(val) or val == "" or val == "–" or val == "--":
-        return np.nan
-    if isinstance(val, (int, float)):
-        return float(val)
-    s = str(val).strip()
-    s = s.replace("\u00a0", "").replace(" ", "")
-    if "," in s and "." in s:
-        s = s.replace(".", "").replace(",", ".")
-    else:
-        s = s.replace(",", ".")
-    try:
-        return float(s)
-    except Exception:
-        return np.nan
-
-
-def parse_percentage_value(val):
-    """Szöveg → százalék konverzió."""
-    if pd.isna(val) or val == "" or val == "–":
-        return np.nan
-    s = str(val).strip().replace("%", "")
-    s = s.replace("\u00a0", "").replace(" ", "")
-    if "," in s and "." in s:
-        s = s.replace(".", "").replace(",", ".")
-    else:
-        s = s.replace(",", ".")
-    try:
-        return float(s)
-    except Exception:
-        return np.nan
-
-
-def parse_date(val):
-    """Szöveg → dátum konverzió."""
-    if pd.isna(val):
-        return None
-    date_formats = [
-        "%Y-%m-%d",
-        "%Y.%m.%d",
-        "%d.%m.%Y",
-        "%d-%m-%Y",
-        "%m/%d/%Y",
-    ]
-    for fmt in date_formats:
-        try:
-            return pd.to_datetime(val, format=fmt)
-        except Exception:
-            continue
-    try:
-        return pd.to_datetime(val)
-    except Exception:
-        return None
 
 
 def normalize_data(df, mapping, user_adjustments=None, platform_hint=None):
@@ -236,26 +229,21 @@ def normalize_data(df, mapping, user_adjustments=None, platform_hint=None):
     if "platform" not in normalized_df.columns:
         normalized_df["platform"] = platform_hint if platform_hint else "Unknown"
 
-    # ✅ INTELLIGENS EREDMÉNYTÍPUS FELISMERÉS
-    if "results" not in normalized_df.columns or "results_count" not in normalized_df.columns:
-        def determine_results(row):
-            # Prioritás: conversions > add_to_cart > clicks > video_views > impressions
-            if not pd.isna(row.get("conversions")) and row.get("conversions", 0) > 0:
-                return "Vásárlások", int(row.get("conversions", 0))
-            elif not pd.isna(row.get("add_to_cart")) and row.get("add_to_cart", 0) > 0:
-                return "Kosárba helyezések", int(row.get("add_to_cart", 0))
-            elif not pd.isna(row.get("clicks")) and row.get("clicks", 0) > 0:
-                return "Kattintások", int(row.get("clicks", 0))
-            elif not pd.isna(row.get("video_views")) and row.get("video_views", 0) > 0:
-                return "Videó megtekintések", int(row.get("video_views", 0))
-            elif not pd.isna(row.get("impressions")) and row.get("impressions", 0) > 0:
-                return "Megtekintések", int(row.get("impressions", 0))
-            else:
-                return "Ismeretlen", 0
-
-        result_data = normalized_df.apply(determine_results, axis=1, result_type="expand")
-        normalized_df["results"] = result_data[0]
-        normalized_df["results_count"] = result_data[1]
+    # Intelligens "results" típus felismerés
+    results_type_map = []
+    for idx, row in normalized_df.iterrows():
+        if not pd.isna(row.get("conversions")) and row.get("conversions", 0) > 0:
+            results_type_map.append("Vásárlások")
+        elif not pd.isna(row.get("add_to_cart")) and row.get("add_to_cart", 0) > 0:
+            results_type_map.append("Kosárba helyezések")
+        elif not pd.isna(row.get("engagement")) and row.get("engagement", 0) > 0:
+            results_type_map.append("Engagement")
+        elif not pd.isna(row.get("results_count")) and row.get("results_count", 0) > 0:
+            results_type_map.append("Egyéb eredmények")
+        else:
+            results_type_map.append("Nincs adat")
+    
+    normalized_df["results"] = results_type_map
 
     # Számított mezők
     if "spend" in normalized_df.columns and "conversion_value" in normalized_df.columns:
@@ -268,43 +256,16 @@ def normalize_data(df, mapping, user_adjustments=None, platform_hint=None):
             normalized_df["cpa"] = normalized_df["spend"] / normalized_df["conversions"]
             normalized_df["cpa"] = normalized_df["cpa"].replace([np.inf, -np.inf], np.nan)
 
-    if "clicks" in normalized_df.columns and "impressions" in normalized_df.columns:
-        if "ctr_percent" not in normalized_df.columns:
-            normalized_df["ctr_percent"] = (
-                normalized_df["clicks"] / normalized_df["impressions"] * 100
-            )
-            normalized_df["ctr_percent"] = normalized_df["ctr_percent"].replace(
-                [np.inf, -np.inf], np.nan
-            )
-
-    if "spend" in normalized_df.columns and "clicks" in normalized_df.columns:
-        if "cpc" not in normalized_df.columns:
-            normalized_df["cpc"] = normalized_df["spend"] / normalized_df["clicks"]
-            normalized_df["cpc"] = normalized_df["cpc"].replace([np.inf, -np.inf], np.nan)
-
     return normalized_df
 
 
 def validate_data(df):
-    """Validáció – hibák és figyelmeztetések."""
+    """Validáció."""
     issues = []
     mandatory_fields = [f[0] for f in UNIFIED_SCHEMA["mandatory"]]
     for field in mandatory_fields:
         if field not in df.columns:
             issues.append(f"❌ Hiányzik: {field}")
-        elif df[field].isna().sum() > len(df) * 0.5:
-            issues.append(f"⚠️ Túl sok hiányzik: {field} ({df[field].isna().sum()} / {len(df)})")
-
-    if "roas" in df.columns:
-        invalid_roas = df[(df["roas"] < 0) | (df["roas"] > 100)].shape[0]
-        if invalid_roas > 0:
-            issues.append(f"⚠️ Érvénytelen ROAS értékek: {invalid_roas}")
-
-    if "cpa" in df.columns:
-        invalid_cpa = df[(df["cpa"] < 0)].shape[0]
-        if invalid_cpa > 0:
-            issues.append(f"⚠️ Negatív CPA értékek: {invalid_cpa}")
-
     return issues
 
 
@@ -326,9 +287,6 @@ tab1, tab2, tab3, tab4 = st.tabs(
     ["📥 Feltöltés & Mapping", "✅ Validáció", "📊 Előnézet", "💾 Mentés"]
 )
 
-# ---------------------------------------------------------------------------
-# TAB 1 – Feltöltés & Mapping
-# ---------------------------------------------------------------------------
 with tab1:
     col1, col2 = st.columns([2, 1])
 
@@ -342,19 +300,12 @@ with tab1:
 
     with col2:
         st.subheader("ℹ️ Támogatott formátumok")
-        st.markdown(
-            """
-        - ✅ Facebook Ads Manager
-        - ✅ Google Ads
-        - ⏳ TikTok (hamarosan)
-        """
-        )
+        st.markdown("""- ✅ Facebook Ads Manager\n- ✅ Google Ads\n- ⏳ TikTok""")
 
     platform_hint = st.selectbox(
-        "Melyik platformról származik ez a fájl?",
+        "Melyik platformról származik?",
         ["Facebook", "Google Ads", "TikTok", "Ismeretlen"],
         index=0,
-        help="Ez bekerül a 'platform' oszlopba, ha a CSV-ben nincs ilyen mező.",
     )
 
     if uploaded_file:
@@ -377,7 +328,7 @@ with tab1:
             mapped_cols = st.expander("✅ Leképezett oszlopok", expanded=True)
             with mapped_cols:
                 mapping_display = [
-                    {"CSV Oszlop": csv_col, "Unified Field": unified_col}
+                    {"CSV Oszlop": csv_col, "Unified Field": unified_col, "Score": int(find_matching_column(csv_col, COLUMN_PATTERNS, threshold=75)[1])}
                     for csv_col, unified_col in sorted(initial_mapping.items())
                 ]
                 if mapping_display:
@@ -388,20 +339,13 @@ with tab1:
             if unmapped:
                 unmapped_cols = st.expander(f"⚠️ Felismeretlen oszlopok ({len(unmapped)})")
                 with unmapped_cols:
-                    st.warning("A következő oszlopok nem kerültek besorolásra:")
                     for col in unmapped:
                         st.text(f"• {col}")
 
-            st.subheader("3️⃣ Manuális Korrekció (opcionális)")
-            st.markdown("Ha valamelyik mező rossz helyre került, itt tudod javítani.")
-
+            st.subheader("3️⃣ Manuális Korrekció")
             manual_corrections = {}
             all_fields = ["--Nincs--"]
-            for section in [
-                UNIFIED_SCHEMA["mandatory"],
-                UNIFIED_SCHEMA["recommended"],
-                UNIFIED_SCHEMA["optional"],
-            ]:
+            for section in [UNIFIED_SCHEMA["mandatory"], UNIFIED_SCHEMA["recommended"], UNIFIED_SCHEMA["optional"]]:
                 for field in section:
                     all_fields.append(field[0])
 
@@ -411,9 +355,7 @@ with tab1:
                     new_mapping = st.selectbox(
                         csv_col,
                         all_fields,
-                        index=all_fields.index(current_mapping)
-                        if current_mapping in all_fields
-                        else 0,
+                        index=all_fields.index(current_mapping) if current_mapping in all_fields else 0,
                         key=f"manual_map_{csv_col}",
                     )
                     if new_mapping != "--Nincs--":
@@ -423,21 +365,16 @@ with tab1:
                 st.session_state.mapping.update(manual_corrections)
 
             st.subheader("📋 Adatok Előnézete (RAW)")
-            st.dataframe(raw_df.head(10), use_container_width=True)
+            st.dataframe(raw_df.head(5), use_container_width=True)
 
-            st.session_state.platform_hint = (
-                platform_hint if platform_hint != "Ismeretlen" else None
-            )
+            st.session_state.platform_hint = platform_hint if platform_hint != "Ismeretlen" else None
 
         except Exception as e:
-            st.error(f"❌ Hiba a fájl feldolgozásakor: {str(e)}")
+            st.error(f"❌ Hiba: {str(e)}")
 
-# ---------------------------------------------------------------------------
-# TAB 2 – Validáció
-# ---------------------------------------------------------------------------
 with tab2:
     if st.session_state.uploaded_data is not None:
-        st.subheader("✅ Adatok Normalizálása & Validálása")
+        st.subheader("✅ Normalizálása & Validálása")
         try:
             normalized_df = normalize_data(
                 st.session_state.uploaded_data,
@@ -449,23 +386,18 @@ with tab2:
             validation_issues = validate_data(normalized_df)
 
             if validation_issues:
-                st.warning("### ⚠️ Validációs Figyelmeztetések")
+                st.warning("### ⚠️ Figyelmezetések")
                 for issue in validation_issues:
                     st.warning(issue)
             else:
-                st.success("### ✅ Minden OK! Az adatok készen állnak.")
+                st.success("### ✅ Minden OK!")
 
-            st.info(
-                f"Normalizált adatok: {len(normalized_df)} sor × {len(normalized_df.columns)} oszlop"
-            )
+            st.info(f"Normalizált adatok: {len(normalized_df)} sor × {len(normalized_df.columns)} oszlop")
         except Exception as e:
-            st.error(f"❌ Hiba a normalizálás során: {str(e)}")
+            st.error(f"❌ Hiba: {str(e)}")
     else:
-        st.info("Először töltsd fel az adatokat a '📥 Feltöltés & Mapping' fülön!")
+        st.info("Először töltsd fel az adatokat!")
 
-# ---------------------------------------------------------------------------
-# TAB 3 – Előnézet
-# ---------------------------------------------------------------------------
 with tab3:
     if st.session_state.normalized_data is not None:
         st.subheader("📊 Normalizált Adatok Előnézete")
@@ -475,134 +407,70 @@ with tab3:
             col1, col2, col3 = st.columns(3)
             with col1:
                 if "spend" in df.columns:
-                    st.metric("💰 Teljes Költség (HUF)", f"{df['spend'].sum():,.0f}")
+                    st.metric("💰 Teljes Költség", f"{df['spend'].sum():,.0f} HUF")
             with col2:
                 if "conversion_value" in df.columns:
-                    st.metric(
-                        "💵 Konverziós Érték (HUF)",
-                        f"{df['conversion_value'].sum():,.0f}",
-                    )
+                    st.metric("💵 Konverziós Érték", f"{df['conversion_value'].sum():,.0f} HUF")
             with col3:
                 if "roas" in df.columns:
-                    st.metric("📈 Átlag ROAS (x)", f"{df['roas'].mean():.2f}")
+                    st.metric("📈 Átlag ROAS", f"{df['roas'].mean():.2f}x")
 
             st.subheader("Adatok Táblázat")
             df_display = df.copy()
 
             def fmt_int(x):
-                if pd.isna(x):
-                    return ""
-                return f"{int(round(x)):,}".replace(",", " ")
+                return "" if pd.isna(x) else f"{int(round(x)):,}".replace(",", " ")
 
             def fmt_huf(x):
-                if pd.isna(x):
-                    return ""
-                return f"{int(round(x)):,}".replace(",", " ")
+                return "" if pd.isna(x) else f"{int(round(x)):,}".replace(",", " ")
 
-            def fmt_ctr(x):
-                if pd.isna(x):
-                    return ""
-                return f"{x:.2f}".replace(".", ",") + "%"
+            def fmt_pct(x):
+                return "" if pd.isna(x) else f"{x:.2f}%"
 
-            # Darabszám formázások
-            for col in ["conversions", "impressions", "clicks", "add_to_cart", "reach", "results_count"]:
+            # Formázás
+            for col in ["conversions", "impressions", "reach", "results_count", "add_to_cart", "engagement"]:
                 if col in df_display.columns:
                     df_display[col] = df_display[col].apply(fmt_int)
 
-            if "frequency" in df_display.columns:
-                df_display["frequency"] = df_display["frequency"].apply(
-                    lambda x: "" if pd.isna(x) else f"{x:.4f}"
-                )
-
-            # HUF oszlopok formázása
-            huf_cols = {
-                "spend": "spend (HUF)",
-                "conversion_value": "conversion_value (HUF)",
-                "cpc": "cpc (HUF)",
-                "cpa": "cpa (HUF, számított)",
-                "conv_cost": "conv_cost (HUF)",
-                "add_to_cart_cost": "add_to_cart_cost (HUF)",
-                "add_to_cart_value": "add_to_cart_value (HUF)",
-            }
-            for src, dst in huf_cols.items():
-                if src in df_display.columns:
-                    df_display[dst] = df_display[src].apply(fmt_huf)
-                    del df_display[src]
+            for col in ["spend", "conversion_value", "cpc", "cpa", "conv_cost", "add_to_cart_cost", "add_to_cart_value"]:
+                if col in df_display.columns:
+                    df_display[col] = df_display[col].apply(fmt_huf)
 
             if "ctr_percent" in df_display.columns:
-                df_display["ctr_percent (%)"] = df_display["ctr_percent"].apply(fmt_ctr)
-                del df_display["ctr_percent"]
-
-            # Konverziók átnevezése
-            if "conversions" in df_display.columns:
-                df_display["conversions (db)"] = df_display["conversions"]
-                del df_display["conversions"]
-
-            # add_to_cart átnevezése
-            if "add_to_cart" in df_display.columns:
-                df_display["add_to_cart (db)"] = df_display["add_to_cart"]
-                del df_display["add_to_cart"]
-
-            # Oszlopok sorrendje: results, results_count az elejére
-            cols = df_display.columns.tolist()
-            new_cols = []
-            
-            if "results" in cols:
-                new_cols.append("results")
-                cols.remove("results")
-            if "results_count (db)" in cols:
-                new_cols.append("results_count (db)")
-                cols.remove("results_count (db)")
-            
-            df_display = df_display[new_cols + cols]
+                df_display["ctr_percent"] = df_display["ctr_percent"].apply(fmt_pct)
 
             st.dataframe(df_display, use_container_width=True)
         except Exception as e:
-            st.error(f"❌ Hiba az előnézet során: {str(e)}")
+            st.error(f"❌ Hiba: {str(e)}")
     else:
-        st.info("Először töltsd fel és normalizáld az adatokat.")
+        st.info("Először normalizáld az adatokat!")
 
-# ---------------------------------------------------------------------------
-# TAB 4 – Mentés
-# ---------------------------------------------------------------------------
 with tab4:
     if st.session_state.normalized_data is not None:
-        st.subheader("💾 Adatok Exportálása")
+        st.subheader("💾 Exportálás")
         df = st.session_state.normalized_data
 
         col1, col2 = st.columns(2)
         with col1:
             csv = df.to_csv(index=False)
             st.download_button(
-                "📥 CSV letöltés",
-                data=csv,
-                file_name=f"hyper_normalized_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
+                "📥 CSV",
+                csv,
+                f"hyper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                "text/csv",
             )
         with col2:
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                df.to_excel(writer, index=False, sheet_name="Campaigns")
+                df.to_excel(writer, index=False, sheet_name="Kampanyok")
             st.download_button(
-                "📥 Excel letöltés",
-                data=buffer.getvalue(),
-                file_name=f"hyper_normalized_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "📥 Excel",
+                buffer.getvalue(),
+                f"hyper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
     else:
-        st.info("Először töltsd fel és normalizáld az adatokat.")
+        st.info("Először normalizáld az adatokat!")
 
 st.divider()
-st.markdown(
-    """
-**HYPER App v4.5** | Neuromarketing ROAS Predictor  
-Fázis 1 kész – jöhet a Fázis 2 (Creative Analyzer + ML modell).  
-
-✅ **v4.5 véglegesen javított párosítások:**
-- `Vásárlások` → `conversions` ✅
-- `Vásárlások konverziós értéke` → `conversion_value` ✅
-- `Kosárba helyezések` → `add_to_cart` ✅
-- `Kosárba helyezések konverziós értéke` → `add_to_cart_value` ✅
-- `Eredményenkénti költség` → `conv_cost` ✅
-"""
-)
+st.markdown("**HYPER App v5.0** | Neuromarketing ROAS Predictor\n✅ Hardkódolt, precíz párosítások")

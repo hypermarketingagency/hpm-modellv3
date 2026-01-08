@@ -12,7 +12,7 @@ except ImportError:
 import io
 
 # ============================================================================
-# 🎨 HYPER App - Neuromarketing ROAS Predictor v4.0
+# 🎨 HYPER App - Neuromarketing ROAS Predictor v4.1
 # FÁZIS 1: CSV Importer & Intelligent Mapper
 # ============================================================================
 
@@ -24,7 +24,7 @@ st.set_page_config(
 )
 
 # ============================================================================
-# 📊 CONFIG & SCHEMA (v4.0 – egyszerűsített)
+# 📊 CONFIG & SCHEMA (v4.1 – véglegesen rögzített)
 # ============================================================================
 
 UNIFIED_SCHEMA = {
@@ -34,8 +34,8 @@ UNIFIED_SCHEMA = {
         ("platform", "string", "Platform (Facebook/Google Ads/TikTok)"),
         ("campaign_status", "string", "Kampány státusza"),
         ("spend", "float", "Elköltött összeg (HUF)"),
-        ("conversions", "int", "Konverziók / Vásárlások"),
-        ("conversion_value", "float", "Konverziós érték (HUF)"),
+        ("conversions", "int", "Konverziók / Vásárlások (darabszám)"),
+        ("conversion_value", "float", "Vásárlások konverziós értéke (HUF)"),
     ],
     "recommended": [
         ("impressions", "int", "Megjelenések"),
@@ -43,12 +43,13 @@ UNIFIED_SCHEMA = {
         ("ctr_percent", "float", "CTR (%)"),
         ("cpc", "float", "CPC (HUF)"),
         ("cpa", "float", "CPA (HUF, számított)"),
-        ("conv_cost", "float", "Konverziós költség (HUF)"),
+        ("conv_cost", "float", "Eredményenkénti költség (HUF)"),
         ("roas", "float", "ROAS (x)"),
         ("reach", "int", "Elérés"),
         ("frequency", "float", "Gyakoriság"),
         ("add_to_cart", "int", "Kosárba helyezések (darabszám)"),
         ("add_to_cart_cost", "float", "Kosárba helyezés egységnyi költsége (HUF)"),
+        ("add_to_cart_value", "float", "Kosárba helyezések konverziós értéke (HUF)"),
     ],
     "optional": [
         ("video_views", "int", "Videó megtekintések"),
@@ -57,27 +58,39 @@ UNIFIED_SCHEMA = {
     ],
 }
 
-# Oszlop minták (CSAK az aktuálisan létező mezőkhöz)
+# Oszlop minták – EZEK A HELYES MAPPINGEK
 COLUMN_PATTERNS = {
+    # Egyéb paraméterek
     "cpc": ["cpc (összes) (huf)", "cpc (összes)", "cpc"],
     "ctr_percent": ["ctr (átkattintási arány)", "ctr"],
     "spend": ["elköltött összeg (huf)", "elköltött összeg", "spend"],
     "reach": ["elérés"],
-    "conv_cost": ["eredményenkénti költség", "cost per result"],
     "frequency": ["gyakoriság"],
     "date_start": ["jelentés kezdete", "start date"],
     "campaign_name": ["kampány neve"],
     "campaign_status": ["kampány teljesítése", "status"],
-    "add_to_cart": ["kosárba helyezések"],
-    "add_to_cart_cost": ["kosárba helyezés egységnyi költsége"],
-    "conversion_value": [
-        "vásárlások konverziós értéke",
-        "kosárba helyezések konverziós értéke",
-    ],
     "impressions": ["megjelenések"],
     "roas": ["vásárlási hirdetésmegtérülés"],
-    "conversions": ["vásárlások", "konverziók"],
     "clicks": ["link click", "clicks"],
+    
+    # KRITIKUS: Ezek az egyedi mapping szabályok
+    # Eredményenkénti költség → conv_cost
+    "conv_cost": ["eredményenkénti költség", "cost per result"],
+    
+    # Vásárlások (darabszám) → conversions
+    "conversions": ["vásárlások", "konverziók", "purchases"],
+    
+    # Vásárlások konverziós értéke → conversion_value
+    "conversion_value": ["vásárlások konverziós értéke"],
+    
+    # Kosárba helyezések (darabszám) → add_to_cart
+    "add_to_cart": ["kosárba helyezések"],
+    
+    # Kosárba helyezés egységnyi költsége → add_to_cart_cost
+    "add_to_cart_cost": ["kosárba helyezés egységnyi költsége"],
+    
+    # Kosárba helyezések konverziós értéke → add_to_cart_value
+    "add_to_cart_value": ["kosárba helyezések konverziós értéke"],
 }
 
 # ============================================================================
@@ -469,6 +482,7 @@ with tab3:
                 "cpa": "cpa (HUF, számított)",
                 "conv_cost": "conv_cost (HUF)",
                 "add_to_cart_cost": "add_to_cart_cost (HUF)",
+                "add_to_cart_value": "add_to_cart_value (HUF)",
             }
             for src, dst in huf_cols.items():
                 if src in df_display.columns:
@@ -518,7 +532,7 @@ with tab4:
 st.divider()
 st.markdown(
     """
-**HYPER App v4.0** | Neuromarketing ROAS Predictor  
+**HYPER App v4.1** | Neuromarketing ROAS Predictor  
 Fázis 1 kész – jöhet a Fázis 2 (Creative Analyzer + ML modell).
 """
 )

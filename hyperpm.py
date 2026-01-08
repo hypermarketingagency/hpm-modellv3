@@ -12,7 +12,7 @@ except ImportError:
 import io
 
 # ============================================================================
-# 🎨 HYPER App - Neuromarketing ROAS Predictor v4.2
+# 🎨 HYPER App - Neuromarketing ROAS Predictor v4.3
 # FÁZIS 1: CSV Importer & Intelligent Mapper
 # ============================================================================
 
@@ -24,7 +24,7 @@ st.set_page_config(
 )
 
 # ============================================================================
-# 📊 CONFIG & SCHEMA (v4.2 – eredmények típus hozzáadva)
+# 📊 CONFIG & SCHEMA (v4.3 – eredmények típus + darabszám)
 # ============================================================================
 
 UNIFIED_SCHEMA = {
@@ -48,6 +48,7 @@ UNIFIED_SCHEMA = {
         ("reach", "int", "Elérés"),
         ("frequency", "float", "Gyakoriság"),
         ("results", "string", "Eredmények típusa (vásárlások/kattintások/stb)"),
+        ("results_count", "int", "Eredmények (darabszám)"),
         ("add_to_cart", "int", "Kosárba helyezések (darabszám)"),
         ("add_to_cart_cost", "float", "Kosárba helyezés egységnyi költsége (HUF)"),
         ("add_to_cart_value", "float", "Kosárba helyezések konverziós értéke (HUF)"),
@@ -73,6 +74,7 @@ COLUMN_PATTERNS = {
     "impressions": ["megjelenések"],
     "roas": ["vásárlási hirdetésmegtérülés"],
     "clicks": ["link click", "clicks"],
+    "video_views": ["videó megtekintések", "video views"],
     
     # KRITIKUS: Ezek az egyedi mapping szabályok
     # Eredményenkénti költség → conv_cost
@@ -92,6 +94,9 @@ COLUMN_PATTERNS = {
     
     # Kosárba helyezések konverziós értéke → add_to_cart_value
     "add_to_cart_value": ["kosárba helyezések konverziós értéke"],
+    
+    # Engagement
+    "engagement": ["engagement", "interakció"],
 }
 
 # ============================================================================
@@ -221,19 +226,26 @@ def normalize_data(df, mapping, user_adjustments=None, platform_hint=None):
     if "platform" not in normalized_df.columns:
         normalized_df["platform"] = platform_hint if platform_hint else "Unknown"
 
-    # ÚJ: Eredmények típusa kitöltés
-    # Ha van conversions érték, az "Vásárlások", ha van add_to_cart, az "Kosárba helyezések", stb.
-    if "results" not in normalized_df.columns:
-        normalized_df["results"] = normalized_df.apply(
-            lambda row: (
-                "Vásárlások" if not pd.isna(row.get("conversions")) and row.get("conversions", 0) > 0
-                else "Kosárba helyezések" if not pd.isna(row.get("add_to_cart")) and row.get("add_to_cart", 0) > 0
-                else "Kattintások" if not pd.isna(row.get("clicks")) and row.get("clicks", 0) > 0
-                else "Megtekintések" if not pd.isna(row.get("video_views")) and row.get("video_views", 0) > 0
-                else "Ismeretlen"
-            ),
-            axis=1
-        )
+    # ÚJ v4.3: Eredmények típusa + darabszám kitöltés (intelligens)
+    if "results" not in normalized_df.columns or "results_count" not in normalized_df.columns:
+        def determine_results(row):
+            # Prioritás sorrendje: conversions > add_to_cart > clicks > video_views > impressions
+            if not pd.isna(row.get("conversions")) and row.get("conversions", 0) > 0:
+                return "Vásárlások", int(row.get("conversions", 0))
+            elif not pd.isna(row.get("add_to_cart")) and row.get("add_to_cart", 0) > 0:
+                return "Kosárba helyezések", int(row.get("add_to_cart", 0))
+            elif not pd.isna(row.get("clicks")) and row.get("clicks", 0) > 0:
+                return "Kattintások", int(row.get("clicks", 0))
+            elif not pd.isna(row.get("video_views")) and row.get("video_views", 0) > 0:
+                return "Videó megtekintések", int(row.get("video_views", 0))
+            elif not pd.isna(row.get("impressions")) and row.get("impressions", 0) > 0:
+                return "Megtekintések", int(row.get("impressions", 0))
+            else:
+                return "Ismeretlen", 0
+
+        result_data = normalized_df.apply(determine_results, axis=1, result_type="expand")
+        normalized_df["results"] = result_data[0]
+        normalized_df["results_count"] = result_data[1]
 
     # Számított mezők
     if "spend" in normalized_df.columns and "conversion_value" in normalized_df.columns:
@@ -481,7 +493,7 @@ with tab3:
                     return ""
                 return f"{x:.2f}".replace(".", ",") + "%"
 
-            for col in ["conversions", "impressions", "clicks", "add_to_cart", "reach"]:
+            for col in ["conversions", "impressions", "clicks", "add_to_cart", "reach", "results_count"]:
                 if col in df_display.columns:
                     df_display[col] = df_display[col].apply(fmt_int)
 
@@ -490,14 +502,6 @@ with tab3:
                     lambda x: "" if pd.isna(x) else f"{x:.4f}"
                 )
 
-            # Oszlopok átrendezése: "results" az "add_to_cart" elé
-            column_order = [
-                "date_start", "campaign_name", "campaign_status", "impressions", "reach",
-                "results", "add_to_cart", "roas", "frequency", "platform", "spend (HUF)",
-                "cpc (HUF)", "cpa (HUF, számított)", "conv_cost (HUF)",
-                "add_to_cart_cost (HUF)", "ctr_percent (%)"
-            ]
-            
             huf_cols = {
                 "spend": "spend (HUF)",
                 "conversion_value": "conversion_value (HUF)",
@@ -525,6 +529,16 @@ with tab3:
             if "add_to_cart" in df_display.columns:
                 df_display["add_to_cart_value (HUF)"] = df_display["add_to_cart"]
                 del df_display["add_to_cart"]
+
+            # Oszlopok átrendezése: "results" és "results_count (db)" az elejére
+            cols = df_display.columns.tolist()
+            # Ha vannak az oszlopok, a végéről az elejére vigyük
+            if "results" in cols:
+                cols.remove("results")
+            if "results_count (db)" in cols:
+                cols.remove("results_count (db)")
+            
+            df_display = df_display[["results", "results_count (db)"] + cols] if "results" in df_display.columns else df_display
 
             st.dataframe(df_display, use_container_width=True)
         except Exception as e:
@@ -565,7 +579,7 @@ with tab4:
 st.divider()
 st.markdown(
     """
-**HYPER App v4.2** | Neuromarketing ROAS Predictor  
+**HYPER App v4.3** | Neuromarketing ROAS Predictor  
 Fázis 1 kész – jöhet a Fázis 2 (Creative Analyzer + ML modell).
 """
 )

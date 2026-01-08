@@ -12,7 +12,7 @@ except ImportError:
 import io
 
 # ============================================================================
-# 🎨 HYPER App - Neuromarketing ROAS Predictor v4.3
+# 🎨 HYPER App - Neuromarketing ROAS Predictor v4.4
 # FÁZIS 1: CSV Importer & Intelligent Mapper
 # ============================================================================
 
@@ -24,7 +24,7 @@ st.set_page_config(
 )
 
 # ============================================================================
-# 📊 CONFIG & SCHEMA (v4.3 – eredmények típus + darabszám)
+# 📊 CONFIG & SCHEMA (v4.4 – helyes párosítások)
 # ============================================================================
 
 UNIFIED_SCHEMA = {
@@ -60,43 +60,47 @@ UNIFIED_SCHEMA = {
     ],
 }
 
-# Oszlop minták – EZEK A HELYES MAPPINGEK
+# VÉGLEGESEN HELYES Oszlop minták
 COLUMN_PATTERNS = {
-    # Egyéb paraméterek
-    "cpc": ["cpc (összes) (huf)", "cpc (összes)", "cpc"],
-    "ctr_percent": ["ctr (átkattintási arány)", "ctr"],
+    # Alap paraméterek
+    "cpc": ["cpc (összes) (huf)", "cpc (összes)", "cpc", "cost per click"],
+    "ctr_percent": ["ctr (átkattintási arány)", "ctr", "átkattintási arány"],
     "spend": ["elköltött összeg (huf)", "elköltött összeg", "spend"],
-    "reach": ["elérés"],
-    "frequency": ["gyakoriság"],
-    "date_start": ["jelentés kezdete", "start date"],
-    "campaign_name": ["kampány neve"],
-    "campaign_status": ["kampány teljesítése", "status"],
-    "impressions": ["megjelenések"],
-    "roas": ["vásárlási hirdetésmegtérülés"],
-    "clicks": ["link click", "clicks"],
+    "reach": ["elérés", "reach"],
+    "frequency": ["gyakoriság", "frequency"],
+    "impressions": ["megjelenések", "impressions"],
+    "roas": ["vásárlási hirdetésmegtérülés", "roas", "hirdetésmegtérülés"],
+    "clicks": ["link click", "clicks", "kattintások"],
     "video_views": ["videó megtekintések", "video views"],
+    "engagement": ["engagement", "interakció"],
     
-    # KRITIKUS: Ezek az egyedi mapping szabályok
-    # Eredményenkénti költség → conv_cost
+    # Kampány adatok
+    "date_start": ["jelentés kezdete", "start date"],
+    "campaign_name": ["kampány neve", "campaign name"],
+    "campaign_status": ["kampány teljesítése", "status", "állapot"],
+    
+    # KRITIKUS: Ezek az egyedi, helyes mapping szabályok
+    # Eredményenkénti költség → conv_cost (NE legyen más!)
     "conv_cost": ["eredményenkénti költség", "cost per result"],
     
-    # Vásárlások (darabszám) → conversions
-    "conversions": ["vásárlások", "konverziók", "purchases"],
+    # Vásárlások (darabszám) → conversions (NE legyen conversion_value!)
+    "conversions": ["vásárlások", "konverziók", "purchases", "orders"],
     
-    # Vásárlások konverziós értéke → conversion_value
-    "conversion_value": ["vásárlások konverziós értéke"],
+    # Vásárlások konverziós értéke → conversion_value (NE legyen conversions!)
+    "conversion_value": ["vásárlások konverziós értéke", "purchase value"],
     
-    # Kosárba helyezések (darabszám) → add_to_cart
-    "add_to_cart": ["kosárba helyezések"],
+    # Kosárba helyezések (darabszám) → add_to_cart (NE legyen add_to_cart_value!)
+    "add_to_cart": ["kosárba helyezések", "add to cart"],
     
     # Kosárba helyezés egységnyi költsége → add_to_cart_cost
-    "add_to_cart_cost": ["kosárba helyezés egységnyi költsége"],
+    "add_to_cart_cost": ["kosárba helyezés egységnyi költsége", "cost per add to cart"],
     
-    # Kosárba helyezések konverziós értéke → add_to_cart_value
-    "add_to_cart_value": ["kosárba helyezések konverziós értéke"],
+    # Kosárba helyezések konverziós értéke → add_to_cart_value (NE legyen add_to_cart!)
+    "add_to_cart_value": ["kosárba helyezések konverziós értéke", "add to cart value"],
     
-    # Engagement
-    "engagement": ["engagement", "interakció"],
+    # Eredmények (az oszlop, amely a Campaign Objective-t/Optimization Goal-t tartalmazza)
+    # De az adatokat a "results" és "results_count" mezőkbe szeretnénk, nem erre
+    # Ezért ez az oszlop nincs párosítva – a kódban számítva lesz
 }
 
 # ============================================================================
@@ -226,7 +230,7 @@ def normalize_data(df, mapping, user_adjustments=None, platform_hint=None):
     if "platform" not in normalized_df.columns:
         normalized_df["platform"] = platform_hint if platform_hint else "Unknown"
 
-    # ÚJ v4.3: Eredmények típusa + darabszám kitöltés (intelligens)
+    # Intelligens eredménytípus felismerés + darabszám
     if "results" not in normalized_df.columns or "results_count" not in normalized_df.columns:
         def determine_results(row):
             # Prioritás sorrendje: conversions > add_to_cart > clicks > video_views > impressions
@@ -493,6 +497,7 @@ with tab3:
                     return ""
                 return f"{x:.2f}".replace(".", ",") + "%"
 
+            # Darabszám formázások
             for col in ["conversions", "impressions", "clicks", "add_to_cart", "reach", "results_count"]:
                 if col in df_display.columns:
                     df_display[col] = df_display[col].apply(fmt_int)
@@ -502,6 +507,7 @@ with tab3:
                     lambda x: "" if pd.isna(x) else f"{x:.4f}"
                 )
 
+            # HUF oszlopok formázása
             huf_cols = {
                 "spend": "spend (HUF)",
                 "conversion_value": "conversion_value (HUF)",
@@ -530,15 +536,19 @@ with tab3:
                 df_display["add_to_cart_value (HUF)"] = df_display["add_to_cart"]
                 del df_display["add_to_cart"]
 
-            # Oszlopok átrendezése: "results" és "results_count (db)" az elejére
+            # Oszlopok sorrendje: results, results_count az elejére
             cols = df_display.columns.tolist()
-            # Ha vannak az oszlopok, a végéről az elejére vigyük
+            new_cols = []
+            
+            # Végigmegyünk az oszlopokon és az eleje legyen: results, results_count (db)
             if "results" in cols:
+                new_cols.append("results")
                 cols.remove("results")
             if "results_count (db)" in cols:
+                new_cols.append("results_count (db)")
                 cols.remove("results_count (db)")
             
-            df_display = df_display[["results", "results_count (db)"] + cols] if "results" in df_display.columns else df_display
+            df_display = df_display[new_cols + cols]
 
             st.dataframe(df_display, use_container_width=True)
         except Exception as e:
@@ -579,7 +589,7 @@ with tab4:
 st.divider()
 st.markdown(
     """
-**HYPER App v4.3** | Neuromarketing ROAS Predictor  
+**HYPER App v4.4** | Neuromarketing ROAS Predictor  
 Fázis 1 kész – jöhet a Fázis 2 (Creative Analyzer + ML modell).
 """
 )

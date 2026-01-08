@@ -12,7 +12,7 @@ except ImportError:
 import io
 
 # ============================================================================
-# 🎨 HYPER App - Neuromarketing ROAS Predictor v3.9
+# 🎨 HYPER App - Neuromarketing ROAS Predictor v4.0
 # FÁZIS 1: CSV Importer & Intelligent Mapper
 # ============================================================================
 
@@ -24,13 +24,12 @@ st.set_page_config(
 )
 
 # ============================================================================
-# 📊 CONFIG & SCHEMA
+# 📊 CONFIG & SCHEMA (v4.0 – egyszerűsített)
 # ============================================================================
 
 UNIFIED_SCHEMA = {
     "mandatory": [
         ("date_start", "date", "Jelentés kezdete (dátum)"),
-        ("date_end", "date", "Jelentés vége (dátum)"),
         ("campaign_name", "string", "Kampány neve"),
         ("platform", "string", "Platform (Facebook/Google Ads/TikTok)"),
         ("campaign_status", "string", "Kampány státusza"),
@@ -48,11 +47,8 @@ UNIFIED_SCHEMA = {
         ("roas", "float", "ROAS (x)"),
         ("reach", "int", "Elérés"),
         ("frequency", "float", "Gyakoriság"),
-        ("add_to_cart", "int", "Kosárba helyezések"),
-        ("cost_per_addtocart", "float", "Kosárba helyezés egységnyi költsége (HUF)"),
-        ("results", "int", "Eredmények (FB results oszlop)"),
-        ("adset_budget", "float", "Hirdetéssorozat költségkerete (HUF)"),
-        ("adset_budget_type", "string", "Hirdetéssorozat költségkeretének típusa"),
+        ("add_to_cart", "int", "Kosárba helyezések (darabszám)"),
+        ("add_to_cart_cost", "float", "Kosárba helyezés egységnyi költsége (HUF)"),
     ],
     "optional": [
         ("video_views", "int", "Videó megtekintések"),
@@ -61,34 +57,27 @@ UNIFIED_SCHEMA = {
     ],
 }
 
-# FONTOS: „Eredmény jelzése” NINCS a mintákban → nem lesz felismerve.
+# Oszlop minták (CSAK az aktuálisan létező mezőkhöz)
 COLUMN_PATTERNS = {
     "cpc": ["cpc (összes) (huf)", "cpc (összes)", "cpc"],
     "ctr_percent": ["ctr (átkattintási arány)", "ctr"],
     "spend": ["elköltött összeg (huf)", "elköltött összeg", "spend"],
     "reach": ["elérés"],
-    # Eredmények: csak az a sor, aminek a neve PONTOSAN „Eredmények”
-    "results": ["eredmények"],
     "conv_cost": ["eredményenkénti költség", "cost per result"],
     "frequency": ["gyakoriság"],
-    "adset_budget": ["hirdetéssorozat költségkerete"],
-    "adset_budget_type": ["hirdetéssorozat költségkeretének típusa"],
-    "date_start": ["jelentés kezdete"],
-    "date_end": ["jelentés vége", "vége"],
+    "date_start": ["jelentés kezdete", "start date"],
     "campaign_name": ["kampány neve"],
-    "campaign_status": ["kampány teljesítése"],
-    "cost_per_addtocart": ["kosárba helyezés egységnyi költsége"],
+    "campaign_status": ["kampány teljesítése", "status"],
     "add_to_cart": ["kosárba helyezések"],
+    "add_to_cart_cost": ["kosárba helyezés egységnyi költsége"],
     "conversion_value": [
         "vásárlások konverziós értéke",
         "kosárba helyezések konverziós értéke",
     ],
     "impressions": ["megjelenések"],
     "roas": ["vásárlási hirdetésmegtérülés"],
-    # conversions: csak „Vásárlások”/„Konverziók” típusú oszlopokra ül rá,
-    # nem fog ráülni a „Vásárlások konverziós értéke” oszlopra.
-    "conversions": ["vásárlások", "konverziók", "purchases", "orders"],
-    "clicks": ["link click", "clicks", "kattintás", "kattintások"],
+    "conversions": ["vásárlások", "konverziók"],
+    "clicks": ["link click", "clicks"],
 }
 
 # ============================================================================
@@ -96,7 +85,6 @@ COLUMN_PATTERNS = {
 # ============================================================================
 
 def find_matching_column(csv_column, patterns_dict, threshold=80):
-    """Szándékosan magasabb threshold, hogy ne keverje össze „Eredmény jelzése” vs „Eredmények”."""
     csv_col_lower = csv_column.lower().strip()
     best_match = None
     best_score = 0
@@ -216,12 +204,10 @@ def normalize_data(df, mapping, user_adjustments=None, platform_hint=None):
         else:
             normalized_df[field_name] = raw_data
 
-    if "date_start" in normalized_df.columns and "date_end" not in normalized_df.columns:
-        normalized_df["date_end"] = normalized_df["date_start"]
-
     if "platform" not in normalized_df.columns:
         normalized_df["platform"] = platform_hint if platform_hint else "Unknown"
 
+    # Számított mezők
     if "spend" in normalized_df.columns and "conversion_value" in normalized_df.columns:
         if "roas" not in normalized_df.columns:
             normalized_df["roas"] = normalized_df["conversion_value"] / normalized_df["spend"]
@@ -467,7 +453,7 @@ with tab3:
                     return ""
                 return f"{x:.2f}".replace(".", ",") + "%"
 
-            for col in ["conversions", "impressions", "clicks", "add_to_cart", "reach", "results"]:
+            for col in ["conversions", "impressions", "clicks", "add_to_cart", "reach"]:
                 if col in df_display.columns:
                     df_display[col] = df_display[col].apply(fmt_int)
 
@@ -482,8 +468,7 @@ with tab3:
                 "cpc": "cpc (HUF)",
                 "cpa": "cpa (HUF, számított)",
                 "conv_cost": "conv_cost (HUF)",
-                "cost_per_addtocart": "cost_per_addtocart (HUF)",
-                "adset_budget": "adset_budget (HUF)",
+                "add_to_cart_cost": "add_to_cart_cost (HUF)",
             }
             for src, dst in huf_cols.items():
                 if src in df_display.columns:
@@ -533,7 +518,7 @@ with tab4:
 st.divider()
 st.markdown(
     """
-**HYPER App v3.9** | Neuromarketing ROAS Predictor  
+**HYPER App v4.0** | Neuromarketing ROAS Predictor  
 Fázis 1 kész – jöhet a Fázis 2 (Creative Analyzer + ML modell).
 """
 )

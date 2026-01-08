@@ -1,0 +1,6 @@
+streamlit
+pandas
+numpy
+openpyxl
+thefuzz
+python-Levenshtein

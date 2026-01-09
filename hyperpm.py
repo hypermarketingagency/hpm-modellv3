@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 # ============================================================================
-# 📊 HARDKÓDOLT PLATFORM-SPECIFIKUS MAPPINGEK (v7.2 - Conversion Rate Fix)
+# 📊 HARDKÓDOLT PLATFORM-SPECIFIKUS MAPPINGEK (v8.0 - TikTok Support)
 # ============================================================================
 
 FACEBOOK_EXACT_MAPPING = {
@@ -58,8 +58,8 @@ GOOGLE_ADS_EXACT_MAPPING = {
     "Átl. CPC": "cpc",
     "Megjel.": "impressions",
     "Költség/konv.": "cpa",
-    "Átl. költség": "avg_cost",  # ✅ JAVÍTÁS: Új mező
-    "Konv. arány": "conversion_rate",  # ✅ JAVÍTÁS: Új mező
+    "Átl. költség": "avg_cost",
+    "Konv. arány": "conversion_rate",
 }
 
 GOOGLE_ADS_SKIP_COLUMNS = {
@@ -77,11 +77,37 @@ GOOGLE_ADS_SKIP_COLUMNS = {
     "Eredeti konv. érték",
 }
 
+# TikTok Ads oszlopnevei (Angol)
+TIKTOK_EXACT_MAPPING = {
+    "Campaign name": "campaign_name",
+    "Primary status": "campaign_status",
+    "Cost": "spend",
+    "Impressions": "impressions",
+    "Clicks (destination)": "clicks",
+    "CTR (destination)": "ctr_percent",
+    "Purchases (website)": "conversions",
+    "Purchase value (website)": "conversion_value",
+    "Purchase ROAS (app)": "roas_app",
+    "Payment completion ROAS (website)": "roas",
+    "Checkouts initiated (website)": "checkouts_initiated",
+    "Adds to cart (website)": "add_to_cart",
+    "Video views": "video_views",
+    "Video views at 50%": "video_views_50",
+    "Video views at 100%": "video_views_100",
+    "2-second video views": "video_views_2s",
+    "6-second video views": "video_views_6s",
+}
+
+TIKTOK_SKIP_COLUMNS = {
+    "Currency",
+    "Total of",
+}
+
 UNIFIED_SCHEMA = {
     "mandatory": [
         ("date_start", "date", "Jelentés kezdete (dátum)"),
         ("campaign_name", "string", "Kampány neve"),
-        ("platform", "string", "Platform (Facebook/Google Ads)"),
+        ("platform", "string", "Platform (Facebook/Google Ads/TikTok)"),
         ("campaign_status", "string", "Kampány státusza"),
         ("spend", "float", "Elköltött összeg (HUF)"),
         ("conversions", "int", "Konverziók (darabszám)"),
@@ -90,16 +116,24 @@ UNIFIED_SCHEMA = {
     "recommended": [
         ("impressions", "int", "Megjelenések"),
         ("clicks", "int", "Kattintások"),
-        ("ctr_percent", "percentage", "CTR (%)"),  # ✅ JAVÍTÁS: percentage típus
+        ("ctr_percent", "percentage", "CTR (%)"),
         ("cpc", "float", "CPC (HUF)"),
         ("cpa", "float", "CPA (HUF)"),
         ("avg_cost", "float", "Átlagos költség (HUF)"),
-        ("conversion_rate", "percentage", "Konverziós ráta (%)"),  # ✅ JAVÍTÁS: percentage típus
+        ("conversion_rate", "percentage", "Konverziós ráta (%)"),
         ("conv_cost", "float", "Eredményenkénti költség (HUF)"),
         ("roas", "float", "ROAS (x)"),
+        ("roas_app", "float", "ROAS App (x)"),
         ("reach", "int", "Elérés"),
         ("frequency", "float", "Gyakoriság"),
         ("results_count", "int", "Eredmények (darabszám)"),
+        ("add_to_cart", "int", "Kosárba helyezések (darabszám)"),
+        ("checkouts_initiated", "int", "Kezdeményezett fizetések (darabszám)"),
+        ("video_views", "int", "Videó megtekintések"),
+        ("video_views_50", "int", "50% videó megtekintések"),
+        ("video_views_100", "int", "100% videó megtekintések"),
+        ("video_views_2s", "int", "2 mp videó megtekintések"),
+        ("video_views_6s", "int", "6 mp videó megtekintések"),
     ],
 }
 
@@ -108,12 +142,9 @@ UNIFIED_SCHEMA = {
 # ============================================================================
 
 def clean_excel_structure(df):
-    """
-    Google Ads Excel-ből kihagyja az üres/szerkezeti sorokat.
-    Az első igazi header-t keresi meg.
-    """
+    """Google Ads/TikTok Excel-ből kihagyja az üres/szerkezeti sorokat."""
     for idx, row in df.iterrows():
-        if any(col in str(row.values) for col in ["Kampány", "Költség", "Konverziók", "Megjel."]):
+        if any(col in str(row.values) for col in ["Kampány", "Költség", "Konverziók", "Megjel.", "Campaign name", "Cost"]):
             df_clean = df.iloc[idx+1:].reset_index(drop=True)
             df_clean.columns = row.values
             df_clean = df_clean.loc[:, ~df_clean.columns.str.contains("Unnamed")]
@@ -142,10 +173,8 @@ def parse_percentage_value(val):
     s = str(val).strip().replace("%", "").replace(",", ".").replace(" ", "")
     try:
         num = float(s)
-        # Ha 0 és 1 között van, szorozzuk 100-zal (pl. 0.1565 → 15.65)
         if 0 <= num <= 1:
             return num * 100
-        # Ha már nagyobb, mint 1, valószínűleg már %-ban van
         return num
     except:
         return np.nan
@@ -168,11 +197,18 @@ def detect_platform(df_columns):
     """Platform detektálása."""
     facebook_matches = sum(1 for col in df_columns if col in FACEBOOK_EXACT_MAPPING)
     google_matches = sum(1 for col in df_columns if col in GOOGLE_ADS_EXACT_MAPPING)
+    tiktok_matches = sum(1 for col in df_columns if col in TIKTOK_EXACT_MAPPING)
     
-    if facebook_matches > google_matches:
+    max_matches = max(facebook_matches, google_matches, tiktok_matches)
+    
+    if max_matches == 0:
+        return "unknown"
+    elif facebook_matches == max_matches:
         return "facebook"
-    elif google_matches > facebook_matches:
+    elif google_matches == max_matches:
         return "google_ads"
+    elif tiktok_matches == max_matches:
+        return "tiktok"
     else:
         return "unknown"
 
@@ -187,11 +223,14 @@ def create_mapping_from_platform(df_columns, platform):
     elif platform == "google_ads":
         skip_cols = GOOGLE_ADS_SKIP_COLUMNS
         exact_map = GOOGLE_ADS_EXACT_MAPPING
+    elif platform == "tiktok":
+        skip_cols = TIKTOK_SKIP_COLUMNS
+        exact_map = TIKTOK_EXACT_MAPPING
     else:
         return {}, list(df_columns)
     
     for col in df_columns:
-        if col in skip_cols or "Unnamed" in col:
+        if col in skip_cols or "Unnamed" in col or "Total of" in col:
             continue
         elif col in exact_map:
             mapping[col] = exact_map[col]
@@ -221,7 +260,6 @@ def normalize_data(df, mapping, platform):
         field_name, field_type, _ = field_info
         raw_data = df[csv_col]
 
-        # ✅ JAVÍTÁS: Percentage típusok kezelése
         if field_type == "percentage":
             normalized_df[field_name] = raw_data.apply(parse_percentage_value)
         elif field_type == "float":
@@ -240,20 +278,26 @@ def normalize_data(df, mapping, platform):
             normalized_df[field_name] = raw_data
 
     if "platform" not in normalized_df.columns:
-        normalized_df["platform"] = platform.replace("_", " ").title()
+        platform_display = platform.replace("_", " ").title()
+        if platform == "tiktok":
+            platform_display = "TikTok"
+        normalized_df["platform"] = platform_display
 
     # CPA számítása, ha nincs
-    if platform == "facebook":
-        if "spend" in normalized_df.columns and "conversions" in normalized_df.columns:
-            if "cpa" not in normalized_df.columns:
-                normalized_df["cpa"] = normalized_df["spend"] / normalized_df["conversions"]
-                normalized_df["cpa"] = normalized_df["cpa"].replace([np.inf, -np.inf], np.nan)
+    if "spend" in normalized_df.columns and "conversions" in normalized_df.columns:
+        if "cpa" not in normalized_df.columns or normalized_df["cpa"].isna().all():
+            normalized_df["cpa"] = normalized_df["spend"] / normalized_df["conversions"]
+            normalized_df["cpa"] = normalized_df["cpa"].replace([np.inf, -np.inf], np.nan)
 
     # Intelligens "results" típus
     results_type_map = []
     for idx, row in normalized_df.iterrows():
         if not pd.isna(row.get("conversions")) and row.get("conversions", 0) > 0:
             results_type_map.append("Vásárlások")
+        elif not pd.isna(row.get("add_to_cart")) and row.get("add_to_cart", 0) > 0:
+            results_type_map.append("Kosárba helyezések")
+        elif not pd.isna(row.get("video_views")) and row.get("video_views", 0) > 0:
+            results_type_map.append("Videó megtekintések")
         else:
             results_type_map.append("Egyéb")
     
@@ -267,13 +311,11 @@ def normalize_data(df, mapping, platform):
 
 def format_dataframe_for_display(df):
     """Streamlit dataframe formázása - percentage oszlopok %-ás kijelzéshez."""
-    # Másolatot készítünk, hogy ne módosítsuk az eredeti adatokat
     display_df = df.copy()
     
     percentage_cols = ["ctr_percent", "conversion_rate"]
     for col in percentage_cols:
         if col in display_df.columns:
-            # Formázás: 2 tizedesjegy + %
             display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "–")
     
     return display_df
@@ -303,7 +345,7 @@ with tab1:
     uploaded_file = st.file_uploader(
         "Válassz CSV vagy Excel fájlt",
         type=["csv", "xlsx", "xls"],
-        help="Facebook vagy Google Ads export",
+        help="Facebook, Google Ads vagy TikTok export",
     )
 
     if uploaded_file:
@@ -313,7 +355,7 @@ with tab1:
             else:
                 raw_df = pd.read_excel(uploaded_file)
 
-            # Google Ads Excel tisztítása
+            # Excel tisztítása (Google Ads/TikTok)
             if uploaded_file.name.endswith((".xlsx", ".xls")):
                 raw_df = clean_excel_structure(raw_df)
 
@@ -328,10 +370,12 @@ with tab1:
 
             if detected_platform == "unknown":
                 st.warning("⚠️ Nem sikerült felismerni a platform típusát. Válassz manuálisan:")
-                selected_platform = st.selectbox("Platform:", ["Facebook", "Google Ads"])
-                st.session_state.platform = "facebook" if selected_platform == "Facebook" else "google_ads"
+                selected_platform = st.selectbox("Platform:", ["Facebook", "Google Ads", "TikTok"])
+                platform_map = {"Facebook": "facebook", "Google Ads": "google_ads", "TikTok": "tiktok"}
+                st.session_state.platform = platform_map[selected_platform]
             else:
-                platform_name = "Facebook" if detected_platform == "facebook" else "Google Ads"
+                platform_names = {"facebook": "Facebook", "google_ads": "Google Ads", "tiktok": "TikTok"}
+                platform_name = platform_names[detected_platform]
                 st.success(f"✅ Felismert platform: {platform_name}")
 
             st.subheader("2️⃣ Automata Oszlop Felismerés")
@@ -391,10 +435,11 @@ with tab3:
                 if "conversion_value" in df.columns:
                     st.metric("💵 Érték", f"{df['conversion_value'].sum():,.0f} HUF")
             with col3:
-                if "roas" in df.columns:
+                if "roas" in df.columns and df["roas"].notna().any():
                     st.metric("📈 ROAS", f"{df['roas'].mean():.2f}x")
+                elif "video_views" in df.columns and df["video_views"].notna().any():
+                    st.metric("🎬 Videó nézetek", f"{df['video_views'].sum():,.0f}")
 
-            # ✅ JAVÍTÁS: Formázott kijelzés
             display_df = format_dataframe_for_display(df)
             st.dataframe(display_df, use_container_width=True)
         except Exception as e:
@@ -425,4 +470,4 @@ with tab4:
         st.info("Először normalizáld az adatokat!")
 
 st.divider()
-st.markdown("**HYPER App v7.2** | Multi-Platform Support with Percentage Formatting\n✅ Facebook + Google Ads - % Display Format")
+st.markdown("**HYPER App v8.0** | Multi-Platform Support: Facebook + Google Ads + TikTok\n✅ Automata platform detektálás • % formázás • Video metrics support")

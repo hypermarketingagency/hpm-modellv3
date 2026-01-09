@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 # ============================================================================
-# 📊 HARDKÓDOLT PLATFORM-SPECIFIKUS MAPPINGEK (v7.1 - Google Ads Fix)
+# 📊 HARDKÓDOLT PLATFORM-SPECIFIKUS MAPPINGEK (v7.2 - Conversion Rate Fix)
 # ============================================================================
 
 FACEBOOK_EXACT_MAPPING = {
@@ -58,6 +58,8 @@ GOOGLE_ADS_EXACT_MAPPING = {
     "Átl. CPC": "cpc",
     "Megjel.": "impressions",
     "Költség/konv.": "cpa",
+    "Átl. költség": "avg_cost",  # ✅ JAVÍTÁS: Új mező
+    "Konv. arány": "conversion_rate",  # ✅ JAVÍTÁS: Új mező
 }
 
 GOOGLE_ADS_SKIP_COLUMNS = {
@@ -88,9 +90,11 @@ UNIFIED_SCHEMA = {
     "recommended": [
         ("impressions", "int", "Megjelenések"),
         ("clicks", "int", "Kattintások"),
-        ("ctr_percent", "float", "CTR (%)"),
+        ("ctr_percent", "percentage", "CTR (%)"),  # ✅ JAVÍTÁS: percentage típus
         ("cpc", "float", "CPC (HUF)"),
         ("cpa", "float", "CPA (HUF)"),
+        ("avg_cost", "float", "Átlagos költség (HUF)"),
+        ("conversion_rate", "percentage", "Konverziós ráta (%)"),  # ✅ JAVÍTÁS: percentage típus
         ("conv_cost", "float", "Eredményenkénti költség (HUF)"),
         ("roas", "float", "ROAS (x)"),
         ("reach", "int", "Elérés"),
@@ -108,13 +112,10 @@ def clean_excel_structure(df):
     Google Ads Excel-ből kihagyja az üres/szerkezeti sorokat.
     Az első igazi header-t keresi meg.
     """
-    # Keresünk egy sort, ahol "Kampány" vagy "Költség" oszlop van
     for idx, row in df.iterrows():
         if any(col in str(row.values) for col in ["Kampány", "Költség", "Konverziók", "Megjel."]):
-            # Ez a header sor!
             df_clean = df.iloc[idx+1:].reset_index(drop=True)
             df_clean.columns = row.values
-            # Üres oszlopokat eltávolítjuk
             df_clean = df_clean.loc[:, ~df_clean.columns.str.contains("Unnamed")]
             return df_clean
     return df
@@ -135,11 +136,17 @@ def parse_numeric_value(val):
         return np.nan
 
 def parse_percentage_value(val):
+    """Percentáge értékek feldolgozása - szorzás 100-zal ha szükséges."""
     if pd.isna(val) or val == "" or val == "–" or val == "< 10%" or val == "--":
         return np.nan
     s = str(val).strip().replace("%", "").replace(",", ".").replace(" ", "")
     try:
-        return float(s)
+        num = float(s)
+        # Ha 0 és 1 között van, szorozzuk 100-zal (pl. 0.1565 → 15.65)
+        if 0 <= num <= 1:
+            return num * 100
+        # Ha már nagyobb, mint 1, valószínűleg már %-ban van
+        return num
     except:
         return np.nan
 
@@ -214,7 +221,8 @@ def normalize_data(df, mapping, platform):
         field_name, field_type, _ = field_info
         raw_data = df[csv_col]
 
-        if field_name == "ctr_percent":
+        # ✅ JAVÍTÁS: Percentage típusok kezelése
+        if field_type == "percentage":
             normalized_df[field_name] = raw_data.apply(parse_percentage_value)
         elif field_type == "float":
             normalized_df[field_name] = raw_data.apply(parse_numeric_value)
@@ -252,6 +260,23 @@ def normalize_data(df, mapping, platform):
     normalized_df["results"] = results_type_map
 
     return normalized_df
+
+# ============================================================================
+# 📊 FORMÁZÁS - Percentage oszlopok %-ás megjelenítéshez
+# ============================================================================
+
+def format_dataframe_for_display(df):
+    """Streamlit dataframe formázása - percentage oszlopok %-ás kijelzéshez."""
+    # Másolatot készítünk, hogy ne módosítsuk az eredeti adatokat
+    display_df = df.copy()
+    
+    percentage_cols = ["ctr_percent", "conversion_rate"]
+    for col in percentage_cols:
+        if col in display_df.columns:
+            # Formázás: 2 tizedesjegy + %
+            display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "–")
+    
+    return display_df
 
 # ============================================================================
 # 🎨 STREAMLIT UI
@@ -369,7 +394,9 @@ with tab3:
                 if "roas" in df.columns:
                     st.metric("📈 ROAS", f"{df['roas'].mean():.2f}x")
 
-            st.dataframe(df, use_container_width=True)
+            # ✅ JAVÍTÁS: Formázott kijelzés
+            display_df = format_dataframe_for_display(df)
+            st.dataframe(display_df, use_container_width=True)
         except Exception as e:
             st.error(f"❌ Hiba: {str(e)}")
     else:
@@ -398,4 +425,4 @@ with tab4:
         st.info("Először normalizáld az adatokat!")
 
 st.divider()
-st.markdown("**HYPER App v7.1** | Multi-Platform Support with Excel Structure Fix\n✅ Facebook + Google Ads - Auto-clean Excel headers")
+st.markdown("**HYPER App v7.2** | Multi-Platform Support with Percentage Formatting\n✅ Facebook + Google Ads - % Display Format")

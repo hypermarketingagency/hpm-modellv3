@@ -12,10 +12,9 @@ st.set_page_config(
 )
 
 # ============================================================================
-# 📊 HARDKÓDOLT PLATFORM-SPECIFIKUS MAPPINGEK (v7.0)
+# 📊 HARDKÓDOLT PLATFORM-SPECIFIKUS MAPPINGEK (v7.1 - Google Ads Fix)
 # ============================================================================
 
-# Facebook export oszlopnevei
 FACEBOOK_EXACT_MAPPING = {
     "Jelentés kezdete": "date_start",
     "Kampány neve": "campaign_name",
@@ -46,7 +45,7 @@ FACEBOOK_SKIP_COLUMNS = {
     "Hozzárendelés beállítása",
 }
 
-# Google Ads export oszlopnevei (Magyar)
+# Google Ads oszlopnevei (Magyar)
 GOOGLE_ADS_EXACT_MAPPING = {
     "Kampány": "campaign_name",
     "Kampány állapota": "campaign_status",
@@ -62,7 +61,7 @@ GOOGLE_ADS_EXACT_MAPPING = {
 }
 
 GOOGLE_ADS_SKIP_COLUMNS = {
-    "Kampány állapota",  # Ezt később ki kell szűrni az oszlop feldolgozásakor
+    "Kampány állapota",
     "Költségkeret",
     "Költségkeret neve",
     "Költségkerettípus azonosítója",
@@ -97,17 +96,28 @@ UNIFIED_SCHEMA = {
         ("reach", "int", "Elérés"),
         ("frequency", "float", "Gyakoriság"),
         ("results_count", "int", "Eredmények (darabszám)"),
-        ("add_to_cart", "int", "Kosárba helyezések (darabszám)"),
-        ("add_to_cart_cost", "float", "Kosárba helyezés egységnyi költsége (HUF)"),
-        ("add_to_cart_value", "float", "Kosárba helyezések konverziós értéke (HUF)"),
-        ("engagement", "int", "Engagement"),
     ],
-    "optional": [],
 }
 
 # ============================================================================
 # 🔧 HELPERS
 # ============================================================================
+
+def clean_excel_structure(df):
+    """
+    Google Ads Excel-ből kihagyja az üres/szerkezeti sorokat.
+    Az első igazi header-t keresi meg.
+    """
+    # Keresünk egy sort, ahol "Kampány" vagy "Költség" oszlop van
+    for idx, row in df.iterrows():
+        if any(col in str(row.values) for col in ["Kampány", "Költség", "Konverziók", "Megjel."]):
+            # Ez a header sor!
+            df_clean = df.iloc[idx+1:].reset_index(drop=True)
+            df_clean.columns = row.values
+            # Üres oszlopokat eltávolítjuk
+            df_clean = df_clean.loc[:, ~df_clean.columns.str.contains("Unnamed")]
+            return df_clean
+    return df
 
 def parse_numeric_value(val):
     if pd.isna(val) or val == "" or val == "–" or val == "--" or val == "folyamatban":
@@ -148,7 +158,7 @@ def parse_date(val):
         return None
 
 def detect_platform(df_columns):
-    """Automatikusan detektálja, hogy Facebook vagy Google Ads a fájl."""
+    """Platform detektálása."""
     facebook_matches = sum(1 for col in df_columns if col in FACEBOOK_EXACT_MAPPING)
     google_matches = sum(1 for col in df_columns if col in GOOGLE_ADS_EXACT_MAPPING)
     
@@ -160,7 +170,7 @@ def detect_platform(df_columns):
         return "unknown"
 
 def create_mapping_from_platform(df_columns, platform):
-    """Platform alapú mapping létrehozása."""
+    """Platform alapú mapping."""
     mapping = {}
     unmapped = []
     
@@ -174,7 +184,7 @@ def create_mapping_from_platform(df_columns, platform):
         return {}, list(df_columns)
     
     for col in df_columns:
-        if col in skip_cols:
+        if col in skip_cols or "Unnamed" in col:
             continue
         elif col in exact_map:
             mapping[col] = exact_map[col]
@@ -184,7 +194,7 @@ def create_mapping_from_platform(df_columns, platform):
     return mapping, unmapped
 
 def normalize_data(df, mapping, platform):
-    """Adatok normalizálása az Unified Schema alapján."""
+    """Adatok normalizálása."""
     normalized_df = pd.DataFrame()
 
     for csv_col, unified_col in mapping.items():
@@ -192,7 +202,7 @@ def normalize_data(df, mapping, platform):
             continue
 
         field_info = None
-        for section in [UNIFIED_SCHEMA["mandatory"], UNIFIED_SCHEMA["recommended"], UNIFIED_SCHEMA["optional"]]:
+        for section in [UNIFIED_SCHEMA["mandatory"], UNIFIED_SCHEMA["recommended"]]:
             for field in section:
                 if field[0] == unified_col:
                     field_info = field
@@ -224,8 +234,7 @@ def normalize_data(df, mapping, platform):
     if "platform" not in normalized_df.columns:
         normalized_df["platform"] = platform.replace("_", " ").title()
 
-    # Google Ads-nél a "Költség/konv." már a CPA, így a CPA már megvan
-    # De ha Facebook, azt számítjuk
+    # CPA számítása, ha nincs
     if platform == "facebook":
         if "spend" in normalized_df.columns and "conversions" in normalized_df.columns:
             if "cpa" not in normalized_df.columns:
@@ -237,14 +246,8 @@ def normalize_data(df, mapping, platform):
     for idx, row in normalized_df.iterrows():
         if not pd.isna(row.get("conversions")) and row.get("conversions", 0) > 0:
             results_type_map.append("Vásárlások")
-        elif not pd.isna(row.get("add_to_cart")) and row.get("add_to_cart", 0) > 0:
-            results_type_map.append("Kosárba helyezések")
-        elif not pd.isna(row.get("engagement")) and row.get("engagement", 0) > 0:
-            results_type_map.append("Engagement")
-        elif not pd.isna(row.get("results_count")) and row.get("results_count", 0) > 0:
-            results_type_map.append("Egyéb")
         else:
-            results_type_map.append("Nincs adat")
+            results_type_map.append("Egyéb")
     
     normalized_df["results"] = results_type_map
 
@@ -284,6 +287,10 @@ with tab1:
                 raw_df = pd.read_csv(uploaded_file, encoding="utf-8-sig")
             else:
                 raw_df = pd.read_excel(uploaded_file)
+
+            # Google Ads Excel tisztítása
+            if uploaded_file.name.endswith((".xlsx", ".xls")):
+                raw_df = clean_excel_structure(raw_df)
 
             st.session_state.uploaded_data = raw_df
 
@@ -391,4 +398,4 @@ with tab4:
         st.info("Először normalizáld az adatokat!")
 
 st.divider()
-st.markdown("**HYPER App v7.0** | Multi-Platform Support\n✅ Facebook + Google Ads - Automata platform detektálás")
+st.markdown("**HYPER App v7.1** | Multi-Platform Support with Excel Structure Fix\n✅ Facebook + Google Ads - Auto-clean Excel headers")

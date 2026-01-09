@@ -3,6 +3,15 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import io
+from PIL import Image
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, r2_score
+import warnings
+warnings.filterwarnings('ignore')
+
+# ============================================================================
+# 🎨 PAGE CONFIG & LOGO
+# ============================================================================
 
 st.set_page_config(
     page_title="HYPER - Marketing Campaign Analyzer",
@@ -11,8 +20,19 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
+
+# Header with Logo
+col_logo, col_title = st.columns([0.12, 0.88])
+with col_logo:
+    st.image(logo_url, width=70, use_column_width=False)
+with col_title:
+    st.markdown("<h1 style='margin-top: -10px;'>HYPER - Marketing Campaign Analyzer</h1>", unsafe_allow_html=True)
+
+st.markdown("**🚀 Fázis 1-3: Normalizálás → Analízis → Predikció**")
+
 # ============================================================================
-# 📊 HARDKÓDOLT PLATFORM-SPECIFIKUS MAPPINGEK (v8.1 - Logo Edition)
+# 📊 HARDKÓDOLT MAPPINGEK (Platform-specifikus)
 # ============================================================================
 
 FACEBOOK_EXACT_MAPPING = {
@@ -37,12 +57,8 @@ FACEBOOK_EXACT_MAPPING = {
 }
 
 FACEBOOK_SKIP_COLUMNS = {
-    "Jelentés vége",
-    "Hirdetéssorozat költségkerete",
-    "Hirdetéssorozat költségkeretének típusa",
-    "Vége",
-    "Eredmény jelzése",
-    "Hozzárendelés beállítása",
+    "Jelentés vége", "Hirdetéssorozat költségkerete", "Hirdetéssorozat költségkeretének típusa",
+    "Vége", "Eredmény jelzése", "Hozzárendelés beállítása",
 }
 
 GOOGLE_ADS_EXACT_MAPPING = {
@@ -62,18 +78,9 @@ GOOGLE_ADS_EXACT_MAPPING = {
 }
 
 GOOGLE_ADS_SKIP_COLUMNS = {
-    "Kampány állapota",
-    "Költségkeret",
-    "Költségkeret neve",
-    "Költségkerettípus azonosítója",
-    "Pénznem kód",
-    "Állapot",
-    "Állapot okai",
-    "Optimalizálási pontszám",
-    "Kampánytípus",
-    "Ajánlattételi stratégia típusa",
-    "Keresési megj. arány",
-    "Eredeti konv. érték",
+    "Kampány állapota", "Költségkeret", "Költségkeret neve", "Költségkerettípus azonosítója",
+    "Pénznem kód", "Állapot", "Állapot okai", "Optimalizálási pontszám", "Kampánytípus",
+    "Ajánlattételi stratégia típusa", "Keresési megj. arány", "Eredeti konv. érték",
 }
 
 TIKTOK_EXACT_MAPPING = {
@@ -96,10 +103,7 @@ TIKTOK_EXACT_MAPPING = {
     "6-second video views": "video_views_6s",
 }
 
-TIKTOK_SKIP_COLUMNS = {
-    "Currency",
-    "Total of",
-}
+TIKTOK_SKIP_COLUMNS = {"Currency", "Total of"}
 
 UNIFIED_SCHEMA = {
     "mandatory": [
@@ -117,32 +121,18 @@ UNIFIED_SCHEMA = {
         ("ctr_percent", "percentage", "CTR (%)"),
         ("cpc", "float", "CPC (HUF)"),
         ("cpa", "float", "CPA (HUF)"),
-        ("avg_cost", "float", "Átlagos költség (HUF)"),
-        ("conversion_rate", "percentage", "Konverziós ráta (%)"),
-        ("conv_cost", "float", "Eredményenkénti költség (HUF)"),
         ("roas", "float", "ROAS (x)"),
-        ("roas_app", "float", "ROAS App (x)"),
-        ("reach", "int", "Elérés"),
-        ("frequency", "float", "Gyakoriság"),
-        ("results_count", "int", "Eredmények (darabszám)"),
-        ("add_to_cart", "int", "Kosárba helyezések (darabszám)"),
-        ("checkouts_initiated", "int", "Kezdeményezett fizetések (darabszám)"),
-        ("video_views", "int", "Videó megtekintések"),
-        ("video_views_50", "int", "50% videó megtekintések"),
-        ("video_views_100", "int", "100% videó megtekintések"),
-        ("video_views_2s", "int", "2 mp videó megtekintések"),
-        ("video_views_6s", "int", "6 mp videó megtekintések"),
     ],
 }
 
 # ============================================================================
-# 🔧 HELPERS
+# 🔧 HELPER FUNCTIONS
 # ============================================================================
 
 def clean_excel_structure(df):
-    """Google Ads/TikTok Excel-ből kihagyja az üres/szerkezeti sorokat."""
+    """Excel szerkezeti sorok eltávolítása"""
     for idx, row in df.iterrows():
-        if any(col in str(row.values) for col in ["Kampány", "Költség", "Konverziók", "Megjel.", "Campaign name", "Cost"]):
+        if any(col in str(row.values) for col in ["Kampány", "Költség", "Campaign name", "Cost"]):
             df_clean = df.iloc[idx+1:].reset_index(drop=True)
             df_clean.columns = row.values
             df_clean = df_clean.loc[:, ~df_clean.columns.str.contains("Unnamed")]
@@ -165,7 +155,6 @@ def parse_numeric_value(val):
         return np.nan
 
 def parse_percentage_value(val):
-    """Percentáge értékek feldolgozása - szorzás 100-zal ha szükséges."""
     if pd.isna(val) or val == "" or val == "–" or val == "< 10%" or val == "--":
         return np.nan
     s = str(val).strip().replace("%", "").replace(",", ".").replace(" ", "")
@@ -192,7 +181,7 @@ def parse_date(val):
         return None
 
 def detect_platform(df_columns):
-    """Platform detektálása."""
+    """Platform automatikus detektálása"""
     facebook_matches = sum(1 for col in df_columns if col in FACEBOOK_EXACT_MAPPING)
     google_matches = sum(1 for col in df_columns if col in GOOGLE_ADS_EXACT_MAPPING)
     tiktok_matches = sum(1 for col in df_columns if col in TIKTOK_EXACT_MAPPING)
@@ -211,7 +200,7 @@ def detect_platform(df_columns):
         return "unknown"
 
 def create_mapping_from_platform(df_columns, platform):
-    """Platform alapú mapping."""
+    """Platform alapú automata mapping"""
     mapping = {}
     unmapped = []
     
@@ -238,7 +227,7 @@ def create_mapping_from_platform(df_columns, platform):
     return mapping, unmapped
 
 def normalize_data(df, mapping, platform):
-    """Adatok normalizálása."""
+    """Adatok normalizálása egységes formátumra"""
     normalized_df = pd.DataFrame()
 
     for csv_col, unified_col in mapping.items():
@@ -264,9 +253,7 @@ def normalize_data(df, mapping, platform):
             normalized_df[field_name] = raw_data.apply(parse_numeric_value)
         elif field_type == "int":
             normalized_df[field_name] = raw_data.apply(
-                lambda x: int(parse_numeric_value(x))
-                if not pd.isna(parse_numeric_value(x))
-                else np.nan
+                lambda x: int(parse_numeric_value(x)) if not pd.isna(parse_numeric_value(x)) else np.nan
             )
         elif field_type == "date":
             normalized_df[field_name] = raw_data.apply(parse_date)
@@ -286,56 +273,117 @@ def normalize_data(df, mapping, platform):
             normalized_df["cpa"] = normalized_df["spend"] / normalized_df["conversions"]
             normalized_df["cpa"] = normalized_df["cpa"].replace([np.inf, -np.inf], np.nan)
 
-    results_type_map = []
-    for idx, row in normalized_df.iterrows():
-        if not pd.isna(row.get("conversions")) and row.get("conversions", 0) > 0:
-            results_type_map.append("Vásárlások")
-        elif not pd.isna(row.get("add_to_cart")) and row.get("add_to_cart", 0) > 0:
-            results_type_map.append("Kosárba helyezések")
-        elif not pd.isna(row.get("video_views")) and row.get("video_views", 0) > 0:
-            results_type_map.append("Videó megtekintések")
-        else:
-            results_type_map.append("Egyéb")
-    
-    normalized_df["results"] = results_type_map
-
     return normalized_df
 
-# ============================================================================
-# 📊 FORMÁZÁS
-# ============================================================================
-
 def format_dataframe_for_display(df):
-    """Streamlit dataframe formázása."""
+    """Streamlit megjelenítésre formázás"""
     display_df = df.copy()
-    
     percentage_cols = ["ctr_percent", "conversion_rate"]
     for col in percentage_cols:
         if col in display_df.columns:
             display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "–")
-    
     return display_df
 
 # ============================================================================
-# 🎨 STREAMLIT UI - Logo Edition
+# 🧠 NEUROMARKETING FUNCTIONS (Fázis 2)
 # ============================================================================
 
-# ✅ JAVÍTÁS: Logo a tetőn
-logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
+def analyze_text(text):
+    """Szöveg AI-alapú analízise"""
+    if not text:
+        return 0.5, 0.5, 0, 0.5
+    
+    text_lower = text.lower()
+    
+    emotion_words = ['boldogság', 'szeretet', 'bizalom', 'biztonság', 'közösség', 'család',
+                     'mosolyog', 'szép', 'amazing', 'fantastic', 'love', 'happy', 'perfect']
+    emotion_count = sum(1 for word in emotion_words if word in text_lower)
+    emotion_score = min(0.95, 0.3 + (emotion_count * 0.1))
+    
+    attention_words = ['azonnal', 'most', 'első', 'szenzációs', 'új', 'exkluzív',
+                       'revolutionary', 'breakthrough', 'incredible', 'shocking']
+    attention_count = sum(1 for word in attention_words if word in text_lower)
+    attention_score = min(0.95, 0.3 + (attention_count * 0.08))
+    
+    urgency_words = ['most', 'azonnal', 'hamar', 'korlátozott', 'csak ma', 'utolsó', 'le fog járni',
+                     'limited time', 'hurry', 'urgent']
+    urgency_fomo = 1 if any(word in text_lower for word in urgency_words) else 0
+    
+    personal_words = ['te', 'ön', 'neked', 'nekem', 'mi', 'személyes', 'custom', 'your', 'me', 'personal']
+    personal_count = sum(1 for word in personal_words if word in text_lower)
+    personalization = min(0.95, 0.2 + (personal_count * 0.12))
+    
+    return emotion_score, attention_score, urgency_fomo, personalization
 
-# Csináljunk egy szép header logóval
-col_logo, col_title = st.columns([0.15, 0.85])
+def analyze_image(image):
+    """Kép analízise (vizuális kontraszt)"""
+    try:
+        img = Image.open(image).convert('RGB')
+        width, height = img.size
+        size_score = min(1.0, (width * height) / (1920 * 1080))
+        
+        pixels = np.array(img.resize((100, 100)))
+        contrast = np.std(pixels) / 100
+        visual_contrast = min(1.0, contrast)
+        
+        r_mean, g_mean, b_mean = pixels[:,:,0].mean(), pixels[:,:,1].mean(), pixels[:,:,2].mean()
+        color_var = np.var([r_mean, g_mean, b_mean]) / 2000
+        color_pop = min(1.0, color_var)
+        
+        attention_from_image = (size_score * 0.5 + color_pop * 0.5)
+        
+        return visual_contrast, attention_from_image
+    except Exception as e:
+        return 0.6, 0.6
 
-with col_logo:
-    st.image(logo_url, width=80, use_column_width=False)
+@st.cache_resource
+def train_model(data):
+    """Random Forest modell tanítása"""
+    features = ['platform_encoded', 'emotion_score', 'attention_score', 'social_proof',
+                'urgency_fomo', 'visual_contrast', 'personalization', 'budget', 'cpc', 'ctr']
+    X = data[features].fillna(0)
+    y = data['roas'].fillna(0)
+    
+    model = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=10)
+    model.fit(X, y)
+    
+    y_pred = model.predict(X)
+    rmse = np.sqrt(mean_squared_error(y, y_pred))
+    r2 = r2_score(y, y_pred)
+    
+    return model, rmse, r2, features
 
-with col_title:
-    st.markdown(
-        "<h1 style='margin-top: -10px;'>HYPER - Marketing Campaign Analyzer</h1>",
-        unsafe_allow_html=True
-    )
+@st.cache_resource
+def load_demo_data():
+    """Demo adatok generálása"""
+    np.random.seed(42)
+    n_samples = 500
+    data = {
+        'platform_encoded': np.random.choice([0,1,2], n_samples),
+        'emotion_score': np.random.uniform(0.1, 1.0, n_samples),
+        'attention_score': np.random.uniform(0.2, 0.95, n_samples),
+        'social_proof': np.random.choice([3,5,10,20], n_samples, p=[0.3,0.4,0.2,0.1]),
+        'urgency_fomo': np.random.choice([0,1], n_samples, p=[0.6,0.4]),
+        'visual_contrast': np.random.uniform(0.5, 1.0, n_samples),
+        'personalization': np.random.uniform(0,1,n_samples),
+        'budget': np.random.uniform(100,5000,n_samples),
+        'cpc': np.random.uniform(0.5,3.0,n_samples),
+        'ctr': np.random.uniform(0.5,5.0,n_samples)/100
+    }
+    
+    neuromarketing_factor = (data['emotion_score']*0.3 + data['attention_score']*0.25 +
+                            np.log(data['social_proof']+1)*0.15 + data['urgency_fomo']*0.1 +
+                            data['visual_contrast']*0.1 + data['personalization']*0.1)
+    data['roas'] = np.clip(2 + neuromarketing_factor*4 + np.log(data['budget'])*0.1 +
+                          data['ctr']*20 + np.random.normal(0,0.5,n_samples), 1.0, 10.0)
+    
+    df = pd.DataFrame(data)
+    df['platform'] = df['platform_encoded'].map({0: 'Facebook', 1: 'Google Ads', 2: 'TikTok'})
+    return df
 
-st.markdown("### Fázis 1: Intelligens CSV/Excel Importer")
+# ============================================================================
+# 💾 SESSION STATE INIT
+# ============================================================================
 
 if "uploaded_data" not in st.session_state:
     st.session_state.uploaded_data = None
@@ -345,12 +393,29 @@ if "platform" not in st.session_state:
     st.session_state.platform = None
 if "normalized_data" not in st.session_state:
     st.session_state.normalized_data = None
+if "scores_history" not in st.session_state:
+    st.session_state.scores_history = []
+if "trained_model" not in st.session_state:
+    st.session_state.trained_model = None
 
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["📥 Feltöltés & Mapping", "✅ Validáció", "📊 Előnézet", "💾 Mentés"]
-)
+# ============================================================================
+# 🎯 MAIN TAB STRUCTURE
+# ============================================================================
+
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📥 FÁZIS 1: CSV Import",
+    "🖼️ FÁZIS 2: Hirdetés Analyzer",
+    "🧠 FÁZIS 3: Model Training",
+    "📊 Dashboard"
+])
+
+# ============================================================================
+# TAB 1: FÁZIS 1 - CSV IMPORTER
+# ============================================================================
 
 with tab1:
+    st.markdown("### 📥 Fázis 1: Intelligens CSV/Excel Importer")
+    
     st.subheader("1️⃣ CSV/Excel Feltöltés")
     uploaded_file = st.file_uploader(
         "Válassz CSV vagy Excel fájlt",
@@ -397,88 +462,313 @@ with tab1:
             ]
             if mapping_display:
                 st.dataframe(pd.DataFrame(mapping_display), use_container_width=True)
-            else:
-                st.warning("Nincs felismerés")
 
             if unmapped:
                 st.markdown(f"#### ⚠️ Felismeretlen oszlopok ({len(unmapped)}):")
-                for col in unmapped:
+                for col in unmapped[:5]:
                     st.text(f"• {col}")
 
             st.subheader("📋 Adatok Előnézete")
             st.dataframe(raw_df.head(3), use_container_width=True)
 
+            if st.button("✅ Normalizálás", type="primary"):
+                try:
+                    normalized_df = normalize_data(raw_df, mapping, st.session_state.platform)
+                    st.session_state.normalized_data = normalized_df
+                    st.success(f"✅ {len(normalized_df)} kampány sikeresen normalizálva!")
+                except Exception as e:
+                    st.error(f"❌ Hiba: {str(e)}")
+
+            if st.session_state.normalized_data is not None:
+                st.subheader("📊 Normalizált Adatok")
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if "spend" in st.session_state.normalized_data.columns:
+                        st.metric("💰 Költség", f"{st.session_state.normalized_data['spend'].sum():,.0f} HUF")
+                with col2:
+                    if "conversion_value" in st.session_state.normalized_data.columns:
+                        st.metric("💵 Érték", f"{st.session_state.normalized_data['conversion_value'].sum():,.0f} HUF")
+                with col3:
+                    if "roas" in st.session_state.normalized_data.columns and st.session_state.normalized_data["roas"].notna().any():
+                        st.metric("📈 ROAS", f"{st.session_state.normalized_data['roas'].mean():.2f}x")
+
+                display_df = format_dataframe_for_display(st.session_state.normalized_data)
+                st.dataframe(display_df, use_container_width=True)
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    csv = st.session_state.normalized_data.to_csv(index=False)
+                    st.download_button("📥 CSV", csv, f"hyper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", "text/csv")
+                with col2:
+                    buffer = io.BytesIO()
+                    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                        st.session_state.normalized_data.to_excel(writer, index=False, sheet_name="Kampanyok")
+                    st.download_button("📥 Excel", buffer.getvalue(), f"hyper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx", 
+                                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
         except Exception as e:
             st.error(f"❌ Hiba: {str(e)}")
+
+# ============================================================================
+# TAB 2: FÁZIS 2 - HIRDETÉS ANALYZER
+# ============================================================================
 
 with tab2:
-    if st.session_state.uploaded_data is not None:
-        st.subheader("✅ Normalizálása")
-        try:
-            normalized_df = normalize_data(
-                st.session_state.uploaded_data,
-                st.session_state.mapping,
-                st.session_state.platform,
-            )
-            st.session_state.normalized_data = normalized_df
+    st.markdown("### 🖼️ Fázis 2: Hirdetés Neuromarketing Analízis")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**📸 Hirdetés Kép**")
+        uploaded_image = st.file_uploader("Válassz képet", type=["jpg", "jpeg", "png"], key="image_analyzer")
+        
+        if uploaded_image:
+            image_data = Image.open(uploaded_image)
+            st.image(image_data, use_column_width=True)
+            visual_contrast, attention_img = analyze_image(uploaded_image)
+        else:
+            visual_contrast, attention_img = 0.6, 0.6
+    
+    with col2:
+        st.markdown("**📝 Hirdetés Szöveg**")
+        ad_text = st.text_area("Másold ide a hirdetés szövegét", height=150,
+                              placeholder="Pl: 'Csoda módon új megoldás! Csak ma 50% kedvezmény!'", 
+                              key="text_analyzer")
+        
+        if ad_text:
+            emotion_txt, attention_txt, urgency_txt, personal_txt = analyze_text(ad_text)
+        else:
+            emotion_txt, attention_txt, urgency_txt, personal_txt = 0.5, 0.5, 0, 0.5
 
-            st.success("✅ Sikeres normalizálás!")
-            st.info(f"Adatok: {len(normalized_df)} sor × {len(normalized_df.columns)} oszlop")
-        except Exception as e:
-            st.error(f"❌ Hiba: {str(e)}")
-    else:
-        st.info("Először töltsd fel az adatokat!")
-
-with tab3:
-    if st.session_state.normalized_data is not None:
-        st.subheader("📊 Normalizált Adatok")
-        try:
-            df = st.session_state.normalized_data
-
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                if "spend" in df.columns:
-                    st.metric("💰 Költség", f"{df['spend'].sum():,.0f} HUF")
-            with col2:
-                if "conversion_value" in df.columns:
-                    st.metric("💵 Érték", f"{df['conversion_value'].sum():,.0f} HUF")
-            with col3:
-                if "roas" in df.columns and df["roas"].notna().any():
-                    st.metric("📈 ROAS", f"{df['roas'].mean():.2f}x")
-                elif "video_views" in df.columns and df["video_views"].notna().any():
-                    st.metric("🎬 Videó nézetek", f"{df['video_views'].sum():,.0f}")
-
-            display_df = format_dataframe_for_display(df)
-            st.dataframe(display_df, use_container_width=True)
-        except Exception as e:
-            st.error(f"❌ Hiba: {str(e)}")
-    else:
-        st.info("Először normalizáld az adatokat!")
-
-with tab4:
-    if st.session_state.normalized_data is not None:
-        st.subheader("💾 Exportálás")
-        df = st.session_state.normalized_data
-
+    if uploaded_image or ad_text:
+        st.markdown("---")
+        st.subheader("🤖 Automatikus AI Pontozás")
+        
+        emotion_score = min(0.95, (emotion_txt * 0.7 + attention_img * 0.3))
+        attention_score = min(0.95, (attention_txt * 0.6 + visual_contrast * 0.4))
+        urgency_fomo = urgency_txt
+        personalization = personal_txt
+        social_proof_auto = 5
+        
         col1, col2 = st.columns(2)
         with col1:
-            csv = df.to_csv(index=False)
-            st.download_button("📥 CSV", csv, f"hyper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", "text/csv")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.metric("❤️ Emotion Score", f"{emotion_score:.2f}/1.0")
+            with col_b:
+                st.metric("👁️ Attention Score", f"{attention_score:.2f}/1.0")
         with col2:
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                df.to_excel(writer, index=False, sheet_name="Kampanyok")
-            st.download_button(
-                "📥 Excel",
-                buffer.getvalue(),
-                f"hyper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            col_c, col_d = st.columns(2)
+            with col_c:
+                st.metric("🎨 Visual Contrast", f"{visual_contrast:.2f}/1.0")
+            with col_d:
+                st.metric("🎯 Personalization", f"{personalization:.2f}/1.0")
+
+        st.markdown("---")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("**Platform**")
+            platform_auto = st.selectbox("Platform", ["Facebook", "Google Ads", "TikTok"], key="platform_analyzer")
+        
+        with col2:
+            st.markdown("**Hirdetési Költségvetés (HUF)**")
+            budget_auto = st.number_input("Hirdetési Költségvetés", 10000, 5000000, 500000, 10000, key="budget_analyzer")
+        
+        with col3:
+            st.markdown("**Várható CPC (HUF)**")
+            cpc_auto = st.number_input("Várható CPC", 10, 1000, 300, 10, key="cpc_analyzer")
+        
+        ctr_auto = 2.0 + (attention_score * 3)
+        
+        if st.button("🔮 ROAS Kalkulálás", type="primary", key="auto_prediction"):
+            score_entry = {
+                'timestamp': datetime.now(),
+                'emotion_score': emotion_score,
+                'attention_score': attention_score,
+                'visual_contrast': visual_contrast,
+                'personalization': personalization,
+                'urgency_fomo': urgency_fomo,
+                'social_proof': social_proof_auto,
+                'platform': platform_auto,
+                'budget': budget_auto,
+                'cpc': cpc_auto,
+                'ctr': ctr_auto,
+            }
+            st.session_state.scores_history.append(score_entry)
+            
+            st.success("✅ Scoring mentve! Használd a Fázis 3-ban a Model Training-hez.")
+
+# ============================================================================
+# TAB 3: FÁZIS 3 - MODEL TRAINING
+# ============================================================================
+
+with tab3:
+    st.markdown("### 🧠 Fázis 3: Model Training & Előrejelzés")
+    
+    st.markdown("**Válaszd ki az adatforrást:**")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        data_source = st.radio("Adatforrás", ["Demo Adatok", "Saját CSV"], key="data_source")
+    
+    if data_source == "Demo Adatok":
+        st.info("📌 Demo adatok használata - ideal teszteléshez")
+        df = load_demo_data()
     else:
-        st.info("Először normalizáld az adatokat!")
+        st.info("📁 Feltöltsd a saját CSV fájlodat")
+        uploaded_train = st.file_uploader("CSV fájl feltöltése", type="csv", key="train_csv")
+        
+        if uploaded_train:
+            df = pd.read_csv(uploaded_train)
+            required_cols = ['emotion_score', 'attention_score', 'social_proof', 'urgency_fomo',
+                           'visual_contrast', 'personalization', 'budget', 'cpc', 'ctr', 'roas']
+            missing_cols = [col for col in required_cols if col not in df.columns]
+            if missing_cols:
+                st.error(f"❌ Hiányzó oszlopok: {', '.join(missing_cols)}")
+                st.stop()
+        else:
+            st.warning("⚠️ Kérjük, tölts fel egy CSV fájlt!")
+            st.stop()
+    
+    # Platform encoding
+    if 'platform' in df.columns:
+        df['platform_encoded'] = df['platform'].map(
+            {'Facebook': 0, 'Google Ads': 1, 'TikTok': 2}
+        ).fillna(0).astype(int)
+    else:
+        df['platform_encoded'] = 0
+        df['platform'] = 'Facebook'
+    
+    # Model tanítás
+    model, rmse, r2, features = train_model(df)
+    st.session_state.trained_model = (model, features)
+    
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📈 Model Teljesítmény")
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        st.metric("R² Score", f"{r2:.3f}")
+    with col2:
+        st.metric("RMSE", f"{rmse:.3f}")
+    
+    st.markdown("---")
+    st.subheader("🎯 Manuális ROAS Előrejelzés")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**Platform**")
+        platform_manual = st.selectbox("Platform", ["Facebook", "Google Ads", "TikTok"], key="platform_manual")
+        
+        st.markdown("**Emotion Score**")
+        emotion_manual = st.slider("Emotion Score", 0.0, 1.0, 0.7, 0.05, key="emotion_manual")
+        
+        st.markdown("**Attention Score**")
+        attention_manual = st.slider("Attention Score", 0.0, 1.0, 0.8, 0.05, key="attention_manual")
+    
+    with col2:
+        st.markdown("**Social Proof**")
+        social_proof_manual = st.slider("Social Proof", 0, 20, 5, key="social_proof_manual")
+        
+        st.markdown("**FOMO/Urgency Element**")
+        urgency_manual = st.checkbox("FOMO/Urgency Element", key="urgency_manual")
+        
+        st.markdown("**Visual Contrast**")
+        visual_manual = st.slider("Visual Contrast", 0.0, 1.0, 0.8, 0.05, key="visual_manual")
+    
+    st.markdown("**Personalizáció & Költségek**")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        personal_manual = st.slider("Personalizáció", 0.0, 1.0, 0.6, 0.05, key="personal_manual")
+    with col2:
+        budget_manual = st.number_input("Hirdetési Költségvetés (HUF)", 10000, 5000000, 500000, 10000, key="budget_manual")
+    with col3:
+        cpc_manual = st.number_input("Várható CPC (HUF)", 10, 1000, 300, 10, key="cpc_manual")
+    
+    ctr_manual = st.number_input("Várható CTR (%)", 0.1, 15.0, 2.5, 0.1, key="ctr_manual")
+    
+    if st.button("🔮 ROAS Előrejelzés", type="primary", key="manual_prediction"):
+        plat_enc = {"Facebook": 0, "Google Ads": 1, "TikTok": 2}[platform_manual]
+        
+        input_data = pd.DataFrame({
+            'platform_encoded': [plat_enc],
+            'emotion_score': [emotion_manual],
+            'attention_score': [attention_manual],
+            'social_proof': [social_proof_manual],
+            'urgency_fomo': [int(urgency_manual)],
+            'visual_contrast': [visual_manual],
+            'personalization': [personal_manual],
+            'budget': [budget_manual],
+            'cpc': [cpc_manual],
+            'ctr': [ctr_manual / 100]
+        })
+        
+        roas_pred = model.predict(input_data)[0]
+        revenue = budget_manual * roas_pred
+        profit = revenue - budget_manual
+        
+        st.markdown("---")
+        st.subheader("📊 Előrejelzés Eredménye")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("💰 Várható ROAS", f"{roas_pred:.2f}x", delta=f"+{roas_pred-1:.2f}x profit")
+        with col2:
+            st.metric("💵 Bevétel", f"{revenue:,.0f} HUF", delta=f"+{profit:,.0f} HUF")
+        with col3:
+            st.metric("🎯 CTR", f"{ctr_manual:.1f}%")
+        with col4:
+            st.metric("💳 CPC", f"{cpc_manual:.0f} HUF")
+
+# ============================================================================
+# TAB 4: DASHBOARD
+# ============================================================================
+
+with tab4:
+    st.markdown("### 📊 Szintetikus Dashboard - Fázis 1-3 Összefoglaló")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.session_state.normalized_data is not None:
+            total_spend = st.session_state.normalized_data['spend'].sum()
+            st.metric("💰 Összes Költség", f"{total_spend:,.0f} HUF")
+    
+    with col2:
+        if st.session_state.scores_history:
+            st.metric("📊 Elemzett Hirdetések", len(st.session_state.scores_history))
+    
+    with col3:
+        if st.session_state.trained_model:
+            st.metric("✅ Modell Status", "🟢 Aktív")
+    
+    st.markdown("---")
+    
+    if st.session_state.normalized_data is not None:
+        st.subheader("📈 Kampányok Összesítése")
+        
+        summary = st.session_state.normalized_data.groupby('platform').agg({
+            'spend': 'sum',
+            'conversions': 'sum',
+            'conversion_value': 'sum',
+            'impressions': 'sum',
+        }).round(2)
+        
+        st.dataframe(summary, use_container_width=True)
+    
+    if st.session_state.scores_history:
+        st.subheader("🖼️ Hirdetések Scoring Historia")
+        
+        scores_df = pd.DataFrame(st.session_state.scores_history)
+        scores_df = scores_df[['timestamp', 'platform', 'emotion_score', 'attention_score', 'visual_contrast', 'personalization']]
+        st.dataframe(scores_df, use_container_width=True)
 
 st.divider()
 st.markdown(
-    "<p style='text-align: center; font-size: 12px;'><strong>HYPER App v8.1</strong> | Multi-Platform Support: Facebook + Google Ads + TikTok<br>✅ Automata platform detektálás • % formázás • Video metrics support</p>",
+    "<p style='text-align: center; font-size: 12px;'><strong>HYPER App v9.0</strong> | Fázis 1-3 Integráció<br>✅ CSV Import • 🖼️ Hirdetés Analyzer • 🧠 Model Training • 📊 Dashboard</p>",
     unsafe_allow_html=True
 )

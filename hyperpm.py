@@ -5,14 +5,14 @@ from datetime import datetime
 import io
 
 st.set_page_config(
-    page_title="HYPER - Marketing Predictor",
+    page_title="HYPER - Marketing Campaign Analyzer",
     page_icon="🎯",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # ============================================================================
-# 📊 HARDKÓDOLT PLATFORM-SPECIFIKUS MAPPINGEK (v8.0 - TikTok Support)
+# 📊 HARDKÓDOLT PLATFORM-SPECIFIKUS MAPPINGEK (v8.1 - Logo Edition)
 # ============================================================================
 
 FACEBOOK_EXACT_MAPPING = {
@@ -45,7 +45,6 @@ FACEBOOK_SKIP_COLUMNS = {
     "Hozzárendelés beállítása",
 }
 
-# Google Ads oszlopnevei (Magyar)
 GOOGLE_ADS_EXACT_MAPPING = {
     "Kampány": "campaign_name",
     "Kampány állapota": "campaign_status",
@@ -77,7 +76,6 @@ GOOGLE_ADS_SKIP_COLUMNS = {
     "Eredeti konv. érték",
 }
 
-# TikTok Ads oszlopnevei (Angol)
 TIKTOK_EXACT_MAPPING = {
     "Campaign name": "campaign_name",
     "Primary status": "campaign_status",
@@ -283,13 +281,11 @@ def normalize_data(df, mapping, platform):
             platform_display = "TikTok"
         normalized_df["platform"] = platform_display
 
-    # CPA számítása, ha nincs
     if "spend" in normalized_df.columns and "conversions" in normalized_df.columns:
         if "cpa" not in normalized_df.columns or normalized_df["cpa"].isna().all():
             normalized_df["cpa"] = normalized_df["spend"] / normalized_df["conversions"]
             normalized_df["cpa"] = normalized_df["cpa"].replace([np.inf, -np.inf], np.nan)
 
-    # Intelligens "results" típus
     results_type_map = []
     for idx, row in normalized_df.iterrows():
         if not pd.isna(row.get("conversions")) and row.get("conversions", 0) > 0:
@@ -306,11 +302,11 @@ def normalize_data(df, mapping, platform):
     return normalized_df
 
 # ============================================================================
-# 📊 FORMÁZÁS - Percentage oszlopok %-ás megjelenítéshez
+# 📊 FORMÁZÁS
 # ============================================================================
 
 def format_dataframe_for_display(df):
-    """Streamlit dataframe formázása - percentage oszlopok %-ás kijelzéshez."""
+    """Streamlit dataframe formázása."""
     display_df = df.copy()
     
     percentage_cols = ["ctr_percent", "conversion_rate"]
@@ -321,11 +317,25 @@ def format_dataframe_for_display(df):
     return display_df
 
 # ============================================================================
-# 🎨 STREAMLIT UI
+# 🎨 STREAMLIT UI - Logo Edition
 # ============================================================================
 
-st.title("🎯 HYPER - Marketing Campaign Analyzer")
-st.markdown("## Fázis 1: Intelligens CSV/Excel Importer")
+# ✅ JAVÍTÁS: Logo a tetőn
+logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
+
+# Csináljunk egy szép header logóval
+col_logo, col_title = st.columns([0.15, 0.85])
+
+with col_logo:
+    st.image(logo_url, width=80, use_column_width=False)
+
+with col_title:
+    st.markdown(
+        "<h1 style='margin-top: -10px;'>HYPER - Marketing Campaign Analyzer</h1>",
+        unsafe_allow_html=True
+    )
+
+st.markdown("### Fázis 1: Intelligens CSV/Excel Importer")
 
 if "uploaded_data" not in st.session_state:
     st.session_state.uploaded_data = None
@@ -355,7 +365,6 @@ with tab1:
             else:
                 raw_df = pd.read_excel(uploaded_file)
 
-            # Excel tisztítása (Google Ads/TikTok)
             if uploaded_file.name.endswith((".xlsx", ".xls")):
                 raw_df = clean_excel_structure(raw_df)
 
@@ -364,7 +373,6 @@ with tab1:
             st.success(f"✅ Betöltve: {uploaded_file.name}")
             st.info(f"📊 Sorok: {len(raw_df)}, Oszlopok: {len(raw_df.columns)}")
 
-            # Platform detektálása
             detected_platform = detect_platform(raw_df.columns)
             st.session_state.platform = detected_platform
 
@@ -470,4 +478,7 @@ with tab4:
         st.info("Először normalizáld az adatokat!")
 
 st.divider()
-st.markdown("**HYPER App v8.0** | Multi-Platform Support: Facebook + Google Ads + TikTok\n✅ Automata platform detektálás • % formázás • Video metrics support")
+st.markdown(
+    "<p style='text-align: center; font-size: 12px;'><strong>HYPER App v8.1</strong> | Multi-Platform Support: Facebook + Google Ads + TikTok<br>✅ Automata platform detektálás • % formázás • Video metrics support</p>",
+    unsafe_allow_html=True
+)

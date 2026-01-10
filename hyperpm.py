@@ -858,173 +858,53 @@ with tab2:
         with col_demo_score4:
             st.metric("Régió", region, f"Kód: {region_encoded}")
         
-        # ============================================
-# === ROAS ELŐREJELZÉS (AUTO-FILL VERZIÓ) ===
-# ============================================
-st.markdown("#### 💰 ROAS Előrejelzés")
-
-# Auto-fill függvény
-@st.cache_data
-def get_recommended_values(age_encoded, gender_encoded, device_encoded, region_encoded, platform):
-    """Saját adatokból javasolt értékek számítása"""
-    if df is None or len(df) == 0:
-        return 500000, 300, 2.5
-    
-    # Encoding
-    plat_enc = {'Facebook': 0, 'Google Ads': 1, 'TikTok': 2}.get(platform, 0)
-    
-    # Szűrés: hasonló demográfiájú kampányok
-    filtered_df = df[
-        (df.get('age', 1) == age_encoded) |
-        (df.get('gender', 2) == gender_encoded) |
-        (df.get('region_encoded', 1) == region_encoded) |
-        (df.get('platformencoded', 0) == plat_enc)
-    ]
-    
-    if len(filtered_df) > 0:
-        # Átlagok
-        avg_budget = filtered_df['budget'].mean() if 'budget' in filtered_df else 500000
-        avg_cpc = filtered_df['cpc'].mean() if 'cpc' in filtered_df else 300
-        avg_ctr = filtered_df['ctr'].mean() if 'ctr' in filtered_df else 2.5
-    else:
-        # Fallback: globális átlag
-        avg_budget = df['budget'].mean() if 'budget' in df else 500000
-        avg_cpc = df['cpc'].mean() if 'cpc' in df else 300
-        avg_ctr = df['ctr'].mean() if 'ctr' in df else 2.5
-    
-    return int(avg_budget), int(avg_cpc), round(avg_ctr, 2)
-
-# Demográfiai paraméterek (már megvannak, de újra referenciáljuk)
-age_encoded = {'18-24': 0, '25-34': 1, '35-44': 2, '45-54': 3, '55+': 4}[age_group]
-gender_encoded = {'Mixed': 2, 'Férfi': 0, 'Nő': 1}[gender]
-device_encoded = {'Mobile': 1, 'Desktop': 0, 'Tablet': 2}[device]
-region_encoded = 1 if region == "Budapest" else 0
-plat_enc = {'Facebook': 0, 'Google Ads': 1, 'TikTok': 2}[platform]
-
-# Javasolt értékek
-rec_budget, rec_cpc, rec_ctr = get_recommended_values(age_encoded, gender_encoded, device_encoded, region_encoded, platform)
-
-# === TITLE + INFO ICON ===
-col_title, col_info = st.columns([0.9, 0.1])
-with col_title:
-    st.markdown("**💰 ROAS Előrejelzés**")
-with col_info:
-    st.markdown(
-        f"""
-        <div title="Az előrejelzés az Ön korábbi kampányainak neuromarketing metrikáik és 
-        demográfiai jellemzőik alapján készül. A javasolt költségvetés, CPC és CTR az 
-        azonos paraméterekkel futtatott kampányok átlagaiból származik.">
-            <span style='font-size: 20px; cursor: help;'>ℹ️</span>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-st.divider()
-
-# === INPUT MEZŐK (JAVASOLT ÉRTÉKEKKEL) ===
-col_b1, col_b2, col_b3 = st.columns(3)
-
-with col_b1:
-    budget = st.number_input(
-        "Költségvetés HUF",
-        min_value=10000,
-        max_value=5000000,
-        value=rec_budget,
-        step=50000,
-        key="budget_tab2_auto",
-        help=f"Javasolt: {rec_budget:,} HUF (saját kampányok átlaga)"
-    )
-
-with col_b2:
-    cpc = st.number_input(
-        "Várt CPC HUF",
-        min_value=10,
-        max_value=1000,
-        value=rec_cpc,
-        step=10,
-        key="cpc_tab2_auto",
-        help=f"Javasolt: {rec_cpc} HUF (saját kampányok átlaga)"
-    )
-
-with col_b3:
-    ctr = st.number_input(
-        "Várt CTR %",
-        min_value=0.1,
-        max_value=15.0,
-        value=rec_ctr,
-        step=0.1,
-        key="ctr_tab2_auto",
-        help=f"Javasolt: {rec_ctr}% (saját kampányok átlaga)"
-    )
-
-# Platform választás
-col_plat_label, col_plat_select = st.columns([1, 3])
-with col_plat_label:
-    st.markdown("**Platform**")
-with col_plat_select:
-    platform = st.selectbox(
-        "Válassz platformot",
-        ["Facebook", "Google Ads", "TikTok"],
-        index=0,
-        label_visibility="collapsed",
-        key="platform_tab2_auto"
-    )
-
-st.divider()
-
-# === ELŐREJELZÉS GOMB ===
-if st.button("🔮 ROAS Előrejelzés", type="primary", key="predict_button_tab2", use_container_width=True):
-    
-    # Input data összeállítása
-    input_data = pd.DataFrame({
-        'platformencoded': [plat_enc],
-        'emotionscore': [emotion_score_val],
-        'attentionscore': [attention_score_val],
-        'socialproof': [social_proof_val],
-        'urgencyfomo': [urgency_fomo_val],
-        'visualcontrast': [visual_contrast_val],
-        'personalization': [personalization_val],
-        'age': [age_encoded],
-        'gender': [gender_encoded],
-        'device': [device_encoded],
-        'region_encoded': [region_encoded],
-        'budget': [budget],
-        'cpc': [cpc],
-        'ctr': [ctr]
-    })
-    
-    if model_tab2 is not None:
-        try:
-            roas_pred = model_tab2.predict(input_data)[0]
-            revenue = budget * roas_pred
-            profit = revenue - budget
-            
-            # Eredmények megjelenítése
-            col_roas1, col_roas2, col_roas3 = st.columns(3)
-            with col_roas1:
-                st.metric("🔮 Várt ROAS", f"{roas_pred:.2f}x", delta=f"+{(roas_pred-1)*100:.0f}%")
-            with col_roas2:
-                st.metric("💵 Várt Bevétel", f"{revenue:,.0f} HUF")
-            with col_roas3:
-                st.metric("💰 Profit", f"{profit:,.0f} HUF")
-            
-            # Magyarázat
-            st.info(f"""
-            **📊 Előrejelzés alapadatai:**
-            - Neuromarketing score-ok: emotion={emotion_score_val:.2f}, attention={attention_score_val:.2f}
-            - Demográfia: {age_group} éves, {gender}, {device}, {region}
-            - Platform: {platform}
-            - Költségvetés: {budget:,} HUF @ {cpc} HUF CPC, {ctr}% CTR
-            """)
-            
-            st.success("✅ Előrejelzés kész!")
+        # === ROAS ELŐREJELZÉS ===
+        st.markdown("#### 💰 ROAS Előrejelzés")
         
-        except Exception as e:
-            st.error(f"⚠️ Hiba az előrejelzésnél: {str(e)}")
-    else:
-        st.warning("⚠️ A modell még nem elérhető. Kérjük, tölts fel adatokat a Tab 1-ben!")
-
+        # Default értékek
+        budget = st.number_input("Költségvetés HUF", 10000, 5000000, 500000, key="budget_tab2")
+        cpc = st.number_input("Várt CPC HUF", 10, 1000, 300, key="cpc_tab2")
+        ctr = st.number_input("Várt CTR %", 0.1, 15.0, 2.5, key="ctr_tab2")
+        platform = st.selectbox("Platform", ["Facebook", "Google Ads", "TikTok"], key="platform_tab2")
+        
+        plat_enc = {'Facebook': 0, 'Google Ads': 1, 'TikTok': 2}[platform]
+        
+        input_data = pd.DataFrame({
+            'platformencoded': [plat_enc],
+            'emotionscore': [emotion_score_val],
+            'attentionscore': [attention_score_val],
+            'socialproof': [social_proof_val],
+            'urgencyfomo': [urgency_fomo_val],
+            'visualcontrast': [visual_contrast_val],
+            'personalization': [personalization_val],
+            'age': [age_encoded],
+            'gender': [gender_encoded],
+            'device': [device_encoded],
+            'region_encoded': [region_encoded],
+            'budget': [budget],
+            'cpc': [cpc],
+            'ctr': [ctr]
+        })
+        
+        if model_tab2 is not None:
+            try:
+                roas_pred = model_tab2.predict(input_data)[0]
+                revenue = budget * roas_pred
+                profit = revenue - budget
+                
+                col_roas1, col_roas2, col_roas3 = st.columns(3)
+                with col_roas1:
+                    st.metric("🔮 Várt ROAS", f"{roas_pred:.2f}x")
+                with col_roas2:
+                    st.metric("💵 Várt Bevétel", f"{revenue:,.0f} HUF")
+                with col_roas3:
+                    st.metric("💰 Profit", f"{profit:,.0f} HUF")
+                
+                st.success("✅ Teljes elemzés kész! A modell már tartalmazza a demográfiai adatokat is!")
+            except Exception as e:
+                st.error(f"⚠️ Hiba az előrejelzésnél: {str(e)}")
+        else:
+            st.warning("⚠️ A modell még nem elérhető. Kérjük, tölts fel adatokat a Tab 1-ben!")
 
 
 

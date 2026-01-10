@@ -655,8 +655,61 @@ else:
 
 
 # ============================================
-# TAB 2: HIRDETÉS ANALYZER + DEMOGRÁFIA (JAVÍTOTT)
+# TAB 2: HIRDETÉS ANALYZER + DEMOGRÁFIA (TELJESEN JAVÍTOTT)
 # ============================================
+
+# Segédfüggvények
+def analyze_text(text):
+    """NLP elemzés szövegből"""
+    if not text or len(text) < 3:
+        return 0.5, 0.5, 0, 0.5
+    
+    text_lower = text.lower()
+    
+    # Emotion score
+    emotion_words = ['boldogság', 'szeretet', 'bizalom', 'biztonság', 'közösség', 'család', 'szép', 'amazing', 'love', 'happy']
+    emotion_count = sum(1 for word in emotion_words if word in text_lower)
+    emotion_score = min(0.95, 0.3 + emotion_count * 0.1)
+    
+    # Attention score
+    attention_words = ['azonnal', 'most', 'szenzációs', 'jó', 'exkluzív', 'revolutionary']
+    attention_count = sum(1 for word in attention_words if word in text_lower)
+    attention_score = min(0.95, 0.3 + attention_count * 0.08)
+    
+    # Urgency/FOMO
+    urgency_words = ['most', 'azonnal', 'hamar', 'korlátozott', 'csak ma', 'limited time']
+    urgency_fomo = 1 if any(word in text_lower for word in urgency_words) else 0
+    
+    # Personalization
+    personal_words = ['te', 'neked', 'nekem', 'mi', 'your', 'personal']
+    personal_count = sum(1 for word in personal_words if word in text_lower)
+    personalization = min(0.95, 0.2 + personal_count * 0.12)
+    
+    return emotion_score, attention_score, urgency_fomo, personalization
+
+
+def analyze_image_simple(uploaded_image):
+    """Egyszerű kép elemzés PIL-lel"""
+    if uploaded_image is None:
+        return 0.7
+    
+    try:
+        image = Image.open(uploaded_image)
+        image = image.convert('RGB')
+        
+        # Pixel adatok
+        pixels = np.array(image)
+        
+        # Kontraszt kiszámítása
+        gray = np.mean(pixels, axis=2)
+        contrast = np.std(gray) / (np.mean(gray) + 1)
+        contrast_score = min(1.0, contrast / 100)
+        
+        return max(0.3, min(1.0, contrast_score))
+    except:
+        return 0.7
+
+
 with tab2:
     st.markdown("### 🎯 Hirdetés Automatikus Analízise + Demográfia")
     
@@ -716,7 +769,7 @@ with tab2:
     col_img1, col_img2 = st.columns([1, 2])
     
     with col_img1:
-        uploaded_image = st.file_uploader("📸 Töltsd fel a hirdetés képet", type=['png', 'jpg', 'jpeg'])
+        uploaded_image = st.file_uploader("📸 Töltsd fel a hirdetés képet", type=['png', 'jpg', 'jpeg'], key="img_upload_tab2")
         if uploaded_image:
             image = Image.open(uploaded_image)
             st.image(image, caption="Feltöltött hirdetés", use_column_width=True)
@@ -733,9 +786,9 @@ with tab2:
     if st.button("🚀 Analízis indítása", type="primary", key="analyze_tab2"):
         
         # 1. NEUROMARKETING SCORE-OK (kép/szöveg alapján)
-        emotionscore, attentionscore, urgencyfomo, personalization = analyze_text(ad_text)
-        visualcontrast = analyze_image(uploaded_image) if uploaded_image else 0.7
-        socialproof = 8  # Default, később képelemzéssel
+        emotion_score_val, attention_score_val, urgency_fomo_val, personalization_val = analyze_text(ad_text)
+        visual_contrast_val = analyze_image_simple(uploaded_image)
+        social_proof_val = 8  # Default
         
         # 2. DEMOGRÁFIAI ENCODING
         age_encoded = {'18-24': 0, '25-34': 1, '35-44': 2, '45-54': 3, '55+': 4}[age_group]
@@ -749,13 +802,13 @@ with tab2:
         # Neuromarketing score-ok
         col_score1, col_score2, col_score3, col_score4 = st.columns(4)
         with col_score1:
-            st.metric("Emotion Score", f"{emotionscore:.2f}", "🧠 Érzelmi hatás")
+            st.metric("Emotion Score", f"{emotion_score_val:.2f}", "🧠 Érzelmi hatás")
         with col_score2:
-            st.metric("Attention Score", f"{attentionscore:.2f}", "👁️ Figyelem")
+            st.metric("Attention Score", f"{attention_score_val:.2f}", "👁️ Figyelem")
         with col_score3:
-            st.metric("Visual Contrast", f"{visualcontrast:.2f}", "🎨 Kontraszt")
+            st.metric("Visual Contrast", f"{visual_contrast_val:.2f}", "🎨 Kontraszt")
         with col_score4:
-            st.metric("Urgency/FOMO", f"{urgencyfomo:.0f}", "⏰ Sietség")
+            st.metric("Urgency/FOMO", f"{int(urgency_fomo_val)}", "⏰ Sietség")
         
         # Demográfiai score-ok
         st.markdown("#### 👥 Demográfiai Profil")
@@ -783,12 +836,12 @@ with tab2:
         
         input_data = pd.DataFrame({
             'platformencoded': [plat_enc],
-            'emotionscore': [emotionscore],
-            'attentionscore': [attentionscore],
-            'socialproof': [socialproof],
-            'urgencyfomo': [urgencyfomo],
-            'visualcontrast': [visualcontrast],
-            'personalization': [personalization],
+            'emotionscore': [emotion_score_val],
+            'attentionscore': [attention_score_val],
+            'socialproof': [social_proof_val],
+            'urgencyfomo': [urgency_fomo_val],
+            'visualcontrast': [visual_contrast_val],
+            'personalization': [personalization_val],
             'age': [age_encoded],
             'gender': [gender_encoded],
             'device': [device_encoded],
@@ -798,19 +851,23 @@ with tab2:
             'ctr': [ctr]
         })
         
-        roas_pred = model.predict(input_data)[0]
-        revenue = budget * roas_pred
-        profit = revenue - budget
-        
-        col_roas1, col_roas2, col_roas3 = st.columns(3)
-        with col_roas1:
-            st.metric("🔮 Várt ROAS", f"{roas_pred:.2f}x")
-        with col_roas2:
-            st.metric("💵 Várt Bevétel", f"{revenue:,.0f} HUF")
-        with col_roas3:
-            st.metric("💰 Profit", f"{profit:,.0f} HUF")
-        
-        st.success("✅ Teljes elemzés kész! A modell már tartalmazza a demográfiai adatokat is!")
+        try:
+            roas_pred = model.predict(input_data)[0]
+            revenue = budget * roas_pred
+            profit = revenue - budget
+            
+            col_roas1, col_roas2, col_roas3 = st.columns(3)
+            with col_roas1:
+                st.metric("🔮 Várt ROAS", f"{roas_pred:.2f}x")
+            with col_roas2:
+                st.metric("💵 Várt Bevétel", f"{revenue:,.0f} HUF")
+            with col_roas3:
+                st.metric("💰 Profit", f"{profit:,.0f} HUF")
+            
+            st.success("✅ Teljes elemzés kész! A modell már tartalmazza a demográfiai adatokat is!")
+        except Exception as e:
+            st.error(f"⚠️ Hiba az előrejelzésnél: {str(e)}")
+
 
 
 # ============================================================================

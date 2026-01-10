@@ -255,7 +255,6 @@ def normalize_data(df, mapping, platform):
 
     for csv_col, unified_col in mapping.items():
         if csv_col not in df_filtered.columns:
-        if csv_col not in df.columns:
             continue
 
         field_info = None
@@ -269,7 +268,7 @@ def normalize_data(df, mapping, platform):
             continue
 
         field_name, field_type, _ = field_info
-        raw_data = df[csv_col]
+        raw_data = df_filtered[csv_col]
 
         if field_type == "percentage":
             normalized_df[field_name] = raw_data.apply(parse_percentage_value)
@@ -608,7 +607,6 @@ with tab2:
         ctr_auto = 2.0 + (attention_score * 3)
         
         if st.button("🔮 ROAS Kalkulálás", type="primary", key="auto_prediction"):
-            # Mentés session state-be
             score_entry = {
                 'timestamp': datetime.now(),
                 'emotion_score': emotion_score,
@@ -623,7 +621,6 @@ with tab2:
                 'ctr': ctr_auto,
             }
             st.session_state.scores_history.append(score_entry)
-            
             st.success("✅ Scoring mentve! Használd a Fázis 3-ban a Model Training-hez.")
 
 # ============================================================================
@@ -658,7 +655,6 @@ with tab3:
             st.warning("⚠️ Kérjük, tölts fel egy CSV fájlt!")
             st.stop()
     
-    # Platform encoding
     if 'platform' in df.columns:
         df['platform_encoded'] = df['platform'].map(
             {'Facebook': 0, 'Google Ads': 1, 'TikTok': 2}
@@ -667,7 +663,6 @@ with tab3:
         df['platform_encoded'] = 0
         df['platform'] = 'Facebook'
     
-    # Model tanítás
     model, rmse, r2, features = train_model(df)
     st.session_state.trained_model = (model, features)
     
@@ -794,6 +789,6 @@ with tab4:
 
 st.divider()
 st.markdown(
-    "<p style='text-align: center; font-size: 12px;'><strong>HYPER App v9.0</strong> | Fázis 1-3 Integráció<br>✅ CSV Import • 🖼️ Hirdetés Analyzer • 🧠 Model Training • 📊 Dashboard</p>",
+    "<p style='text-align: center; font-size: 12px;'><strong>HYPER App v9.1</strong> | Fázis 1-3 Integráció<br>✅ CSV Import • 🖼️ Hirdetés Analyzer • 🧠 Model Training • 📊 Dashboard</p>",
     unsafe_allow_html=True
 )

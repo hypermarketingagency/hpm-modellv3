@@ -589,17 +589,36 @@ with tab1:
                          f"{df[df['platform'] == 'TikTok']['roas'].mean():.2f}x átlag ROAS")
     
     # === KORRELÁCIÓS HEATMAP (DEMOGRÁFIA) ===
-    st.markdown("#### 🔗 Demográfia ↔ ROAS Korreláció")
-    
-    correlation_data = {
-        'Korcsoport': df[['age', 'roas']].corr().iloc[0, 1] if 'age' in df.columns else 0,
-        'Nem': df[['gender', 'roas']].corr().iloc[0, 1] if 'gender' in df.columns else 0,
-        'Eszköz': df[['device', 'roas']].corr().iloc[0, 1] if 'device' in df.columns else 0,
-        'Régió': df[['region_encoded', 'roas']].corr().iloc[0, 1] if 'region_encoded' in df.columns else 0,
-        'Emotion Score': df[['emotionscore', 'roas']].corr().iloc[0, 1],
-        'Attention Score': df[['attentionscore', 'roas']].corr().iloc[0, 1],
-    }
-    
+st.markdown("#### 🔗 Demográfia ↔ ROAS Korreláció")
+
+correlation_data = {}
+
+# Demográfiai mezők
+demo_fields = {'age': 'Korcsoport', 'gender': 'Nem', 'device': 'Eszköz', 'region_encoded': 'Régió'}
+for col, label in demo_fields.items():
+    if col in df.columns:
+        try:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            df['roas'] = pd.to_numeric(df['roas'], errors='coerce')
+            corr = df[[col, 'roas']].dropna().corr().iloc[0, 1]
+            correlation_data[label] = corr if not np.isnan(corr) else 0
+        except:
+            correlation_data[label] = 0
+
+# Neuromarketing mezők
+neuro_fields = {'emotionscore': 'Emotion Score', 'attentionscore': 'Attention Score', 
+                'socialproof': 'Social Proof', 'visualcontrast': 'Visual Contrast'}
+for col, label in neuro_fields.items():
+    if col in df.columns:
+        try:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            df['roas'] = pd.to_numeric(df['roas'], errors='coerce')
+            corr = df[[col, 'roas']].dropna().corr().iloc[0, 1]
+            correlation_data[label] = corr if not np.isnan(corr) else 0
+        except:
+            correlation_data[label] = 0
+
+if correlation_data:
     corr_df = pd.DataFrame(list(correlation_data.items()), columns=['Tényező', 'Korreláció ROAS-val'])
     corr_df = corr_df.sort_values('Korreláció ROAS-val', ascending=False)
     
@@ -609,6 +628,9 @@ with tab1:
     
     with col_corr2:
         st.bar_chart(corr_df.set_index('Tényező')['Korreláció ROAS-val'])
+else:
+    st.warning("⚠️ Nincs elegendő adat a korreláció számításához")
+
     
     # === ADATEXPORT ===
     st.markdown("#### 💾 Adatok Exportálása")

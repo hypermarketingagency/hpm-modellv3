@@ -254,7 +254,7 @@ def normalize_data(df, mapping, platform):
     normalized_df = pd.DataFrame()
 
     for csv_col, unified_col in mapping.items():
-        if csv_col not in df_filtered.columns:
+        if csv_col not in df.columns:
             continue
 
         field_info = None
@@ -268,7 +268,7 @@ def normalize_data(df, mapping, platform):
             continue
 
         field_name, field_type, _ = field_info
-        raw_data = df_filtered[csv_col]
+        raw_data = df[csv_col]
 
         if field_type == "percentage":
             normalized_df[field_name] = raw_data.apply(parse_percentage_value)
@@ -615,38 +615,34 @@ with tab2:
         ctr_auto = 2.0 + (attention_score * 3)
         
         if st.button("🔮 ROAS Kalkulálás (Auto-Pontok)", type="primary", key="auto_prediction"):
-    # Auto-train modell ha nem létezik
-    if st.session_state.trained_model is None:
-        with st.spinner("🧠 Modell tanítása Demo adatokkal..."):
-            df_demo = load_demo_data()
-            if 'platform' in df_demo.columns:
-                df_demo['platform_encoded'] = df_demo['platform'].map(
-                    {'Facebook': 0, 'Google Ads': 1, 'TikTok': 2}
-                ).fillna(0).astype(int)
-            model, rmse, r2, features = train_model(df_demo)
-            st.session_state.trained_model = (model, features)
-            st.success(f"✅ Modell tanítva! R²: {r2:.3f}, RMSE: {rmse:.3f}")
-    else:
-        model, features = st.session_state.trained_model
-    
-    plat_enc = {"Facebook": 0, "Google Ads": 1, "TikTok": 2}[platform_auto]
-    
-    input_data = pd.DataFrame({
-        'platform_encoded': [plat_enc],
-        'emotion_score': [emotion_score],
-        'attention_score': [attention_score],
-        'social_proof': [social_proof_auto],
-        'urgency_fomo': [int(urgency_fomo)],
-        'visual_contrast': [visual_contrast],
-        'personalization': [personalization],
-        'budget': [budget_auto],
-        'cpc': [cpc_auto],
-        'ctr': [ctr_auto / 100]
-    })
-    
-    roas_current = model.predict(input_data)[0]
-    # ... REST OF CODE
-
+            # ===== AUTO-TRAIN MODELL HA NEM LÉTEZIK =====
+            if st.session_state.trained_model is None:
+                with st.spinner("🧠 Modell tanítása Demo adatokkal..."):
+                    df_demo = load_demo_data()
+                    if 'platform' in df_demo.columns:
+                        df_demo['platform_encoded'] = df_demo['platform'].map(
+                            {'Facebook': 0, 'Google Ads': 1, 'TikTok': 2}
+                        ).fillna(0).astype(int)
+                    model, rmse, r2, features = train_model(df_demo)
+                    st.session_state.trained_model = (model, features)
+                    st.success(f"✅ Modell tanítva! R²: {r2:.3f}, RMSE: {rmse:.3f}")
+            else:
+                model, features = st.session_state.trained_model
+            
+            plat_enc = {"Facebook": 0, "Google Ads": 1, "TikTok": 2}[platform_auto]
+            
+            input_data = pd.DataFrame({
+                'platform_encoded': [plat_enc],
+                'emotion_score': [emotion_score],
+                'attention_score': [attention_score],
+                'social_proof': [social_proof_auto],
+                'urgency_fomo': [int(urgency_fomo)],
+                'visual_contrast': [visual_contrast],
+                'personalization': [personalization],
+                'budget': [budget_auto],
+                'cpc': [cpc_auto],
+                'ctr': [ctr_auto / 100]
+            })
             
             roas_current = model.predict(input_data)[0]
             revenue_current = budget_auto * roas_current
@@ -798,6 +794,7 @@ with tab3:
             st.warning("⚠️ Kérjük, tölts fel egy CSV fájlt!")
             st.stop()
     
+    # Platform encoding
     if 'platform' in df.columns:
         df['platform_encoded'] = df['platform'].map(
             {'Facebook': 0, 'Google Ads': 1, 'TikTok': 2}
@@ -806,6 +803,7 @@ with tab3:
         df['platform_encoded'] = 0
         df['platform'] = 'Facebook'
     
+    # Model tanítás
     model, rmse, r2, features = train_model(df)
     st.session_state.trained_model = (model, features)
     
@@ -931,7 +929,31 @@ with tab4:
         st.dataframe(scores_df, use_container_width=True)
 
 st.divider()
+
+with st.expander("ℹ️ Hogyan működik a modell?"):
+    st.markdown("""
+    ### Random Forest Algoritmus
+    
+    Ez a modell **100 döntési fát** használ szavazási rendszerben:
+    
+    - Mindegyik fa más szöget lát az adatokra
+    - Szavazatot ad a ROAS-ra
+    - A végeredmény az összes fa átlaga
+    
+    ### Neuromarketing Tényezők
+    
+    - **Emotion Score**: Érzelmi engagement (0-1) - Az agy döntéseit érzelmek hajtják
+    - **Attention Score**: Figyelem (0-1) - Az első 3 másodperc kritikus
+    - **Social Proof**: Vélemények (0-20) - Emberek másolatnak
+    - **FOMO/Urgency**: Sietség - Csökkenti a döntési időt
+    - **Visual Contrast**: Szín (0-1) - Magas kontraszt = figyelem
+    - **Personalization**: Egyéniesítés (0-1) - Név, lokálitás = magasabb CTR
+    - **Budget**: Költségvetés - Nagyobb adspend = több impresszió
+    - **CPC**: Kattintás ára - Platform határozza meg
+    - **CTR**: Kattintási arány - Jó ad = 2-5% CTR
+    """)
+
 st.markdown(
-    "<p style='text-align: center; font-size: 12px;'><strong>HYPER App v9.1</strong> | Fázis 1-3 Integráció<br>✅ CSV Import • 🖼️ Hirdetés Analyzer • 🧠 Model Training • 📊 Dashboard</p>",
+    "<p style='text-align: center; font-size: 12px;'><strong>HYPER App v9.2</strong> | Fázis 1-3 Integráció<br>✅ CSV Import • 🖼️ Hirdetés Analyzer • 🧠 Model Training • 📊 Dashboard</p>",
     unsafe_allow_html=True
 )

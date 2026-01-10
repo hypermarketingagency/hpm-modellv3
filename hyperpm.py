@@ -80,7 +80,7 @@ GOOGLE_ADS_EXACT_MAPPING = {
 GOOGLE_ADS_SKIP_COLUMNS = {
     "Kampány állapota", "Költségkeret", "Költségkeret neve", "Költségkerettípus azonosítója",
     "Pénznem kód", "Állapot", "Állapot okai", "Optimalizálási pontszám", "Kampánytípus",
-    "Ajánlattételi stratégia típusa", "Keresési megj. arány", "Eredeti konv. érték", "Total of",
+    "Ajánlattételi stratégia típusa", "Keresési megj. arány", "Eredeti konv. érték",
 }
 
 TIKTOK_EXACT_MAPPING = {
@@ -137,10 +137,14 @@ def clean_excel_structure(df):
             df_clean.columns = row.values
             df_clean = df_clean.loc[:, ~df_clean.columns.str.contains("Unnamed")]
             
-            # Szűrje az összes olyan sort, amely "Total" szöveget tartalmaz az első oszlopban
-            if len(df_clean) > 0:
+            if len(df_clean) > 0 and len(df_clean.columns) > 0:
                 first_col = df_clean.columns[0]
-                df_clean = df_clean[~df_clean[first_col].astype(str).str.contains("Total", case=False, na=False)]
+                df_col_str = df_clean[first_col].astype(str).str.strip()
+                mask = ~(
+                    df_col_str.str.lower().isin(['nan', '--', '0', '', 'unnamed: 0']) |
+                    df_col_str.str.lower().str.contains('összes|total', regex=True, na=False)
+                )
+                df_clean = df_clean[mask]
             
             df_clean = df_clean.dropna(how='all')
             
@@ -236,16 +240,22 @@ def create_mapping_from_platform(df_columns, platform):
 
 def normalize_data(df, mapping, platform):
     """Adatok normalizálása egységes formátumra"""
-    # Szűrje az összesítő sorokat normalizálás előtt
     df_filtered = df.copy()
-    if len(df_filtered) > 0:
+    if len(df_filtered) > 0 and len(df_filtered.columns) > 0:
         first_col = df_filtered.columns[0]
-        df_filtered = df_filtered[~df_filtered[first_col].astype(str).str.contains("Total|--", case=False, na=False, regex=True)]
+        df_col_str = df_filtered[first_col].astype(str).str.strip()
+        
+        mask = ~(
+            df_col_str.str.lower().isin(['nan', '--', '0', '', 'unnamed: 0']) |
+            df_col_str.str.lower().str.contains('összes|total|campaign name', regex=True, na=False)
+        )
+        df_filtered = df_filtered[mask].reset_index(drop=True)
     
     normalized_df = pd.DataFrame()
 
     for csv_col, unified_col in mapping.items():
         if csv_col not in df_filtered.columns:
+        if csv_col not in df.columns:
             continue
 
         field_info = None
@@ -259,7 +269,7 @@ def normalize_data(df, mapping, platform):
             continue
 
         field_name, field_type, _ = field_info
-        raw_data = df_filtered[csv_col]
+        raw_data = df[csv_col]
 
         if field_type == "percentage":
             normalized_df[field_name] = raw_data.apply(parse_percentage_value)

@@ -29,7 +29,7 @@ with col_logo:
 with col_title:
     st.markdown("<h1 style='margin-top: -10px;'>HYPER - Marketing Campaign Analyzer</h1>", unsafe_allow_html=True)
 
-st.markdown("**🚀 Fázis 1-3: Normalizálás → Analízis → Predikció**")
+st.markdown("**Fázis 1-3: Normalizálás → Analízis → Predikció**")
 
 # ============================================================================
 # 📊 HARDKÓDOLT MAPPINGEK (Platform-specifikus)
@@ -80,7 +80,7 @@ GOOGLE_ADS_EXACT_MAPPING = {
 GOOGLE_ADS_SKIP_COLUMNS = {
     "Kampány állapota", "Költségkeret", "Költségkeret neve", "Költségkerettípus azonosítója",
     "Pénznem kód", "Állapot", "Állapot okai", "Optimalizálási pontszám", "Kampánytípus",
-    "Ajánlattételi stratégia típusa", "Keresési megj. arány", "Eredeti konv. érték",
+    "Ajánlattételi stratégia típusa", "Keresési megj. arány", "Eredeti konv. érték", "Total of",
 }
 
 TIKTOK_EXACT_MAPPING = {
@@ -130,13 +130,21 @@ UNIFIED_SCHEMA = {
 # ============================================================================
 
 def clean_excel_structure(df):
-    """Excel szerkezeti sorok eltávolítása"""
+    """Excel szerkezeti sorok eltávolítása + Total of sorok szűrése"""
     for idx, row in df.iterrows():
         if any(col in str(row.values) for col in ["Kampány", "Költség", "Campaign name", "Cost"]):
             df_clean = df.iloc[idx+1:].reset_index(drop=True)
             df_clean.columns = row.values
             df_clean = df_clean.loc[:, ~df_clean.columns.str.contains("Unnamed")]
-            return df_clean
+            
+            # Szűrje az összes olyan sort, amely "Total" szöveget tartalmaz
+            if len(df_clean) > 0:
+                first_col = df_clean.columns[0]
+                df_clean = df_clean[~df_clean[first_col].astype(str).str.contains("Total", case=False, na=False)]
+            
+            df_clean = df_clean.dropna(how='all')
+            
+            return df_clean.reset_index(drop=True)
     return df
 
 def parse_numeric_value(val):
@@ -584,6 +592,7 @@ with tab2:
         ctr_auto = 2.0 + (attention_score * 3)
         
         if st.button("🔮 ROAS Kalkulálás", type="primary", key="auto_prediction"):
+            # Mentés session state-be
             score_entry = {
                 'timestamp': datetime.now(),
                 'emotion_score': emotion_score,

@@ -615,20 +615,38 @@ with tab2:
         ctr_auto = 2.0 + (attention_score * 3)
         
         if st.button("🔮 ROAS Kalkulálás (Auto-Pontok)", type="primary", key="auto_prediction"):
-            plat_enc = {"Facebook": 0, "Google Ads": 1, "TikTok": 2}[platform_auto]
-            
-            input_data = pd.DataFrame({
-                'platform_encoded': [plat_enc],
-                'emotion_score': [emotion_score],
-                'attention_score': [attention_score],
-                'social_proof': [social_proof_auto],
-                'urgency_fomo': [int(urgency_fomo)],
-                'visual_contrast': [visual_contrast],
-                'personalization': [personalization],
-                'budget': [budget_auto],
-                'cpc': [cpc_auto],
-                'ctr': [ctr_auto / 100]
-            })
+    # Auto-train modell ha nem létezik
+    if st.session_state.trained_model is None:
+        with st.spinner("🧠 Modell tanítása Demo adatokkal..."):
+            df_demo = load_demo_data()
+            if 'platform' in df_demo.columns:
+                df_demo['platform_encoded'] = df_demo['platform'].map(
+                    {'Facebook': 0, 'Google Ads': 1, 'TikTok': 2}
+                ).fillna(0).astype(int)
+            model, rmse, r2, features = train_model(df_demo)
+            st.session_state.trained_model = (model, features)
+            st.success(f"✅ Modell tanítva! R²: {r2:.3f}, RMSE: {rmse:.3f}")
+    else:
+        model, features = st.session_state.trained_model
+    
+    plat_enc = {"Facebook": 0, "Google Ads": 1, "TikTok": 2}[platform_auto]
+    
+    input_data = pd.DataFrame({
+        'platform_encoded': [plat_enc],
+        'emotion_score': [emotion_score],
+        'attention_score': [attention_score],
+        'social_proof': [social_proof_auto],
+        'urgency_fomo': [int(urgency_fomo)],
+        'visual_contrast': [visual_contrast],
+        'personalization': [personalization],
+        'budget': [budget_auto],
+        'cpc': [cpc_auto],
+        'ctr': [ctr_auto / 100]
+    })
+    
+    roas_current = model.predict(input_data)[0]
+    # ... REST OF CODE
+
             
             roas_current = model.predict(input_data)[0]
             revenue_current = budget_auto * roas_current

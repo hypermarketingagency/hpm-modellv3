@@ -137,7 +137,7 @@ def clean_excel_structure(df):
             df_clean.columns = row.values
             df_clean = df_clean.loc[:, ~df_clean.columns.str.contains("Unnamed")]
             
-            # Szűrje az összes olyan sort, amely "Total" szöveget tartalmaz
+            # Szűrje az összes olyan sort, amely "Total" szöveget tartalmaz az első oszlopban
             if len(df_clean) > 0:
                 first_col = df_clean.columns[0]
                 df_clean = df_clean[~df_clean[first_col].astype(str).str.contains("Total", case=False, na=False)]
@@ -236,10 +236,16 @@ def create_mapping_from_platform(df_columns, platform):
 
 def normalize_data(df, mapping, platform):
     """Adatok normalizálása egységes formátumra"""
+    # Szűrje az összesítő sorokat normalizálás előtt
+    df_filtered = df.copy()
+    if len(df_filtered) > 0:
+        first_col = df_filtered.columns[0]
+        df_filtered = df_filtered[~df_filtered[first_col].astype(str).str.contains("Total|--", case=False, na=False, regex=True)]
+    
     normalized_df = pd.DataFrame()
 
     for csv_col, unified_col in mapping.items():
-        if csv_col not in df.columns:
+        if csv_col not in df_filtered.columns:
             continue
 
         field_info = None
@@ -253,7 +259,7 @@ def normalize_data(df, mapping, platform):
             continue
 
         field_name, field_type, _ = field_info
-        raw_data = df[csv_col]
+        raw_data = df_filtered[csv_col]
 
         if field_type == "percentage":
             normalized_df[field_name] = raw_data.apply(parse_percentage_value)

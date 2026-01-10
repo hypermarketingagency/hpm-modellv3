@@ -655,7 +655,7 @@ else:
 
 
 # ============================================
-# TAB 2: HIRDETÉS ANALYZER + DEMOGRÁFIA (TELJESEN JAVÍTOTT)
+# TAB 2: HIRDETÉS ANALYZER + DEMOGRÁFIA (JAVÍTOTT MODELLEL)
 # ============================================
 
 # Segédfüggvények
@@ -710,6 +710,41 @@ def analyze_image_simple(uploaded_image):
         return 0.7
 
 
+# ============================================
+# MODEL CACHE - TAB 2 SZÁMÁRA
+# ============================================
+@st.cache_resource
+def get_model_for_tab2():
+    """Modell betöltése/tanítása Tab 2 számára"""
+    if df is None or len(df) == 0:
+        return None
+    
+    features = ['platformencoded', 'emotionscore', 'attentionscore', 'socialproof', 
+                'urgencyfomo', 'visualcontrast', 'personalization', 'age', 'gender', 
+                'device', 'region_encoded', 'budget', 'cpc', 'ctr']
+    
+    # Ellenőrizd, hogy az összes feature létezik
+    missing_features = [f for f in features if f not in df.columns]
+    if missing_features:
+        # Pótold az hiányzó oszlopokat
+        for feat in missing_features:
+            df[feat] = 0
+    
+    X = df[features].fillna(0)
+    y = df['roas'].fillna(0)
+    
+    model_tab2 = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=10)
+    model_tab2.fit(X, y)
+    
+    return model_tab2
+
+# Modell inicializálása
+model_tab2 = get_model_for_tab2()
+
+
+# ============================================
+# TAB 2 UI
+# ============================================
 with tab2:
     st.markdown("### 🎯 Hirdetés Automatikus Analízise + Demográfia")
     
@@ -851,22 +886,25 @@ with tab2:
             'ctr': [ctr]
         })
         
-        try:
-            roas_pred = model.predict(input_data)[0]
-            revenue = budget * roas_pred
-            profit = revenue - budget
-            
-            col_roas1, col_roas2, col_roas3 = st.columns(3)
-            with col_roas1:
-                st.metric("🔮 Várt ROAS", f"{roas_pred:.2f}x")
-            with col_roas2:
-                st.metric("💵 Várt Bevétel", f"{revenue:,.0f} HUF")
-            with col_roas3:
-                st.metric("💰 Profit", f"{profit:,.0f} HUF")
-            
-            st.success("✅ Teljes elemzés kész! A modell már tartalmazza a demográfiai adatokat is!")
-        except Exception as e:
-            st.error(f"⚠️ Hiba az előrejelzésnél: {str(e)}")
+        if model_tab2 is not None:
+            try:
+                roas_pred = model_tab2.predict(input_data)[0]
+                revenue = budget * roas_pred
+                profit = revenue - budget
+                
+                col_roas1, col_roas2, col_roas3 = st.columns(3)
+                with col_roas1:
+                    st.metric("🔮 Várt ROAS", f"{roas_pred:.2f}x")
+                with col_roas2:
+                    st.metric("💵 Várt Bevétel", f"{revenue:,.0f} HUF")
+                with col_roas3:
+                    st.metric("💰 Profit", f"{profit:,.0f} HUF")
+                
+                st.success("✅ Teljes elemzés kész! A modell már tartalmazza a demográfiai adatokat is!")
+            except Exception as e:
+                st.error(f"⚠️ Hiba az előrejelzésnél: {str(e)}")
+        else:
+            st.warning("⚠️ A modell még nem elérhető. Kérjük, tölts fel adatokat a Tab 1-ben!")
 
 
 

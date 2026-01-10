@@ -436,102 +436,201 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # TAB 1: FÁZIS 1 - CSV IMPORTER
 # ============================================================================
 
+# ============================================
+# TAB 1: DEMOGRÁFIA + ADAT NORMALIZÁLÁS (KITERJESZTETT)
+# ============================================
 with tab1:
-    st.markdown("### 📥 Fázis 1: Intelligens CSV/Excel Importer")
+    st.markdown("### 📊 Fázis 1: Adat Import + Demográfia Normalizálás")
     
-    st.subheader("1️⃣ CSV/Excel Feltöltés")
-    uploaded_file = st.file_uploader(
-        "Válassz CSV vagy Excel fájlt",
-        type=["csv", "xlsx", "xls"],
-        help="Facebook, Google Ads vagy TikTok export",
+    # === ADATFORRÁS VÁLASZTÁS ===
+    datasource = st.sidebar.radio(
+        "📥 Milyen adatokkal szeretnél tantani?",
+        ["Demo Adatok (Alapértelmezett)", "Saját CSV Feltöltés"],
+        key="datasource_tab1"
     )
+    
+    if datasource == "Demo Adatok (Alapértelmezett)":
+        st.sidebar.info("✅ Demo adatok használata - ideális tesztléshez")
+        df = load_demo_data()
+        datamode = "demo"
+    else:
+        st.sidebar.info("📁 Feltöltsd a saját CSV fájlodat")
+        uploaded_file = st.sidebar.file_uploader(
+            "CSV fájl feltöltése",
+            type="csv",
+            help="Szükséges oszlopok: platform, emotionscore, attentionscore, socialproof, urgencyfomo, visualcontrast, personalization, budget, cpc, ctr, roas + OPCIONÁLIS: age, gender, city, region, device, campaign_name"
+        )
+        
+        if uploaded_file:
+            df = load_custom_data(uploaded_file)
+            if df is None:
+                st.stop()
+            datamode = "custom"
+        else:
+            st.warning("❌ Kérjük, tölts fel egy CSV fájlt!")
+            st.stop()
+    
+    # === DEMOGRÁFIA NULLÁZÁS HA NINCS BENNE ===
+    demographic_cols = ['age', 'gender', 'city', 'region', 'device', 'campaign_name']
+    for col in demographic_cols:
+        if col not in df.columns:
+            if col == 'age':
+                df[col] = '25-34'  # Default
+            elif col == 'gender':
+                df[col] = 'Mixed'
+            elif col == 'city':
+                df[col] = 'Hungary'
+            elif col == 'region':
+                df[col] = 'Budapest'
+            elif col == 'device':
+                df[col] = 'Desktop'
+            elif col == 'campaign_name':
+                df[col] = 'Campaign_' + df.index.astype(str)
+    
+    st.success(f"✅ {len(df)} sor sikeresen feldolgozva!")
+    
+    # === DEMOGRÁFIA FELÜLVIZSGÁLAT ===
+    st.markdown("#### 👥 Demográfiai Megbontás")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Platformok", df['platform'].nunique() if 'platform' in df.columns else 1)
+    with col2:
+        st.metric("Kampányok", df['campaign_name'].nunique() if 'campaign_name' in df.columns else 1)
+    with col3:
+        st.metric("Sorok", len(df))
+    
+    # === DEMOGRÁFIA NORMALIZÁLÁS ===
+    st.markdown("#### 🔧 Demográfia Normalizálás")
+    
+    col_norm1, col_norm2 = st.columns(2)
+    
+    with col_norm1:
+        st.markdown("**Korcsoport**")
+        age_mapping = {
+            '18-24': 0,
+            '25-34': 1,
+            '35-44': 2,
+            '45-54': 3,
+            '55+': 4
+        }
+        if df['age'].dtype == 'object':
+            df['age'] = df['age'].map(age_mapping).fillna(1)
+        st.write(f"✓ Korcsoport normalizálva (0-4 scale)")
+    
+    with col_norm2:
+        st.markdown("**Nem**")
+        gender_mapping = {
+            'M': 0, 'Male': 0, 'Férfi': 0,
+            'F': 1, 'Female': 1, 'Nő': 1,
+            'Mixed': 2, 'Other': 2, 'Vegyes': 2
+        }
+        if df['gender'].dtype == 'object':
+            df['gender'] = df['gender'].str.upper().map(gender_mapping).fillna(2)
+        st.write(f"✓ Nem normalizálva (0-2 scale)")
+    
+    col_norm3, col_norm4 = st.columns(2)
+    
+    with col_norm3:
+        st.markdown("**Eszköz**")
+        device_mapping = {
+            'Desktop': 0, 'Mobile': 1, 'Tablet': 2
+        }
+        if df['device'].dtype == 'object':
+            df['device'] = df['device'].map(device_mapping).fillna(0)
+        st.write(f"✓ Eszköz normalizálva (0-2 scale)")
+    
+    with col_norm4:
+        st.markdown("**Régió (Budapest/Vidék)**")
+        df['region_encoded'] = df['region'].apply(
+            lambda x: 1 if isinstance(x, str) and 'budapest' in x.lower() else 0
+        )
+        st.write(f"✓ Régió normalizálva (0-1 scale)")
+    
+    # === GEOGRÁFIAI LEBONTÁS ===
+    st.markdown("#### 📍 Geográfiai Megbontás")
+    
+    if 'city' in df.columns:
+        top_cities = df['city'].value_counts().head(5)
+        col_geo1, col_geo2 = st.columns([1, 1])
+        
+        with col_geo1:
+            st.markdown("**Top városok (kampányok száma)**")
+            for city, count in top_cities.items():
+                st.write(f"• {city}: {count}")
+        
+        with col_geo2:
+            st.markdown("**Átlag ROAS városonként**")
+            city_roas = df.groupby('city')['roas'].mean().sort_values(ascending=False).head(5)
+            for city, roas in city_roas.items():
+                st.write(f"• {city}: **{roas:.2f}x**")
+    
+    # === PLATFORM LEBONTÁS ===
+    st.markdown("#### 📱 Csatorna Megbontás")
+    
+    if 'platform' in df.columns:
+        col_plat1, col_plat2, col_plat3 = st.columns(3)
+        
+        platform_stats = df['platform'].value_counts()
+        
+        with col_plat1:
+            if 'Facebook' in platform_stats.index:
+                st.metric("Facebook", f"{platform_stats.get('Facebook', 0)} kampány", 
+                         f"{df[df['platform'] == 'Facebook']['roas'].mean():.2f}x átlag ROAS")
+        
+        with col_plat2:
+            if 'Google Ads' in platform_stats.index:
+                st.metric("Google Ads", f"{platform_stats.get('Google Ads', 0)} kampány",
+                         f"{df[df['platform'] == 'Google Ads']['roas'].mean():.2f}x átlag ROAS")
+        
+        with col_plat3:
+            if 'TikTok' in platform_stats.index:
+                st.metric("TikTok", f"{platform_stats.get('TikTok', 0)} kampány",
+                         f"{df[df['platform'] == 'TikTok']['roas'].mean():.2f}x átlag ROAS")
+    
+    # === KORRELÁCIÓS HEATMAP (DEMOGRÁFIA) ===
+    st.markdown("#### 🔗 Demográfia ↔ ROAS Korreláció")
+    
+    correlation_data = {
+        'Korcsoport': df[['age', 'roas']].corr().iloc[0, 1] if 'age' in df.columns else 0,
+        'Nem': df[['gender', 'roas']].corr().iloc[0, 1] if 'gender' in df.columns else 0,
+        'Eszköz': df[['device', 'roas']].corr().iloc[0, 1] if 'device' in df.columns else 0,
+        'Régió': df[['region_encoded', 'roas']].corr().iloc[0, 1] if 'region_encoded' in df.columns else 0,
+        'Emotion Score': df[['emotionscore', 'roas']].corr().iloc[0, 1],
+        'Attention Score': df[['attentionscore', 'roas']].corr().iloc[0, 1],
+    }
+    
+    corr_df = pd.DataFrame(list(correlation_data.items()), columns=['Tényező', 'Korreláció ROAS-val'])
+    corr_df = corr_df.sort_values('Korreláció ROAS-val', ascending=False)
+    
+    col_corr1, col_corr2 = st.columns([1, 1])
+    with col_corr1:
+        st.dataframe(corr_df, hide_index=True, use_container_width=True)
+    
+    with col_corr2:
+        st.bar_chart(corr_df.set_index('Tényező')['Korreláció ROAS-val'])
+    
+    # === ADATEXPORT ===
+    st.markdown("#### 💾 Adatok Exportálása")
+    
+    csv_export = df.to_csv(index=False).encode('utf-8')
+    
+    st.download_button(
+        label="📥 Normalizált CSV Letöltés",
+        data=csv_export,
+        file_name=f"demography_normalized_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv",
+        help="Ezzel az adattal lehet később a Google MMM-nek betáplálni"
+    )
+    
+    # === ELŐNÉZET ===
+    st.markdown("#### 👀 Adatok Előnézete")
+    
+    with st.expander("Teljes adat táblázat (első 10 sor)"):
+        st.dataframe(df.head(10), use_container_width=True)
+    
+    st.info("✅ Adatok normalizálva! A Tab 3-ban már lehet az új demográfia mezőkkel tanítani a modellt.")
 
-    if uploaded_file:
-        try:
-            if uploaded_file.name.endswith(".csv"):
-                raw_df = pd.read_csv(uploaded_file, encoding="utf-8-sig")
-            else:
-                raw_df = pd.read_excel(uploaded_file)
-
-            if uploaded_file.name.endswith((".xlsx", ".xls")):
-                raw_df = clean_excel_structure(raw_df)
-
-            st.session_state.uploaded_data = raw_df
-
-            st.success(f"✅ Betöltve: {uploaded_file.name}")
-            st.info(f"📊 Sorok: {len(raw_df)}, Oszlopok: {len(raw_df.columns)}")
-
-            detected_platform = detect_platform(raw_df.columns)
-            st.session_state.platform = detected_platform
-
-            if detected_platform == "unknown":
-                st.warning("⚠️ Nem sikerült felismerni a platform típusát. Válassz manuálisan:")
-                selected_platform = st.selectbox("Platform:", ["Facebook", "Google Ads", "TikTok"])
-                platform_map = {"Facebook": "facebook", "Google Ads": "google_ads", "TikTok": "tiktok"}
-                st.session_state.platform = platform_map[selected_platform]
-            else:
-                platform_names = {"facebook": "Facebook", "google_ads": "Google Ads", "tiktok": "TikTok"}
-                platform_name = platform_names[detected_platform]
-                st.success(f"✅ Felismert platform: {platform_name}")
-
-            st.subheader("2️⃣ Automata Oszlop Felismerés")
-            mapping, unmapped = create_mapping_from_platform(raw_df.columns, st.session_state.platform)
-            st.session_state.mapping = mapping
-
-            st.markdown("#### ✅ Leképezett oszlopok:")
-            mapping_display = [
-                {"CSV Oszlop": csv_col, "Unified Field": unified_col}
-                for csv_col, unified_col in sorted(mapping.items())
-            ]
-            if mapping_display:
-                st.dataframe(pd.DataFrame(mapping_display), use_container_width=True)
-
-            if unmapped:
-                st.markdown(f"#### ⚠️ Felismeretlen oszlopok ({len(unmapped)}):")
-                for col in unmapped[:5]:
-                    st.text(f"• {col}")
-
-            st.subheader("📋 Adatok Előnézete")
-            st.dataframe(raw_df.head(3), use_container_width=True)
-
-            if st.button("✅ Normalizálás", type="primary"):
-                try:
-                    normalized_df = normalize_data(raw_df, mapping, st.session_state.platform)
-                    st.session_state.normalized_data = normalized_df
-                    st.success(f"✅ {len(normalized_df)} kampány sikeresen normalizálva!")
-                except Exception as e:
-                    st.error(f"❌ Hiba: {str(e)}")
-
-            if st.session_state.normalized_data is not None:
-                st.subheader("📊 Normalizált Adatok")
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    if "spend" in st.session_state.normalized_data.columns:
-                        st.metric("💰 Költség", f"{st.session_state.normalized_data['spend'].sum():,.0f} HUF")
-                with col2:
-                    if "conversion_value" in st.session_state.normalized_data.columns:
-                        st.metric("💵 Érték", f"{st.session_state.normalized_data['conversion_value'].sum():,.0f} HUF")
-                with col3:
-                    if "roas" in st.session_state.normalized_data.columns and st.session_state.normalized_data["roas"].notna().any():
-                        st.metric("📈 ROAS", f"{st.session_state.normalized_data['roas'].mean():.2f}x")
-
-                display_df = format_dataframe_for_display(st.session_state.normalized_data)
-                st.dataframe(display_df, use_container_width=True)
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    csv = st.session_state.normalized_data.to_csv(index=False)
-                    st.download_button("📥 CSV", csv, f"hyper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", "text/csv")
-                with col2:
-                    buffer = io.BytesIO()
-                    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                        st.session_state.normalized_data.to_excel(writer, index=False, sheet_name="Kampanyok")
-                    st.download_button("📥 Excel", buffer.getvalue(), f"hyper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx", 
-                                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-        except Exception as e:
-            st.error(f"❌ Hiba: {str(e)}")
 
 # ============================================================================
 # TAB 2: FÁZIS 2 - HIRDETÉS ANALYZER (TELJES REIMPLEMENTÁCIÓ)

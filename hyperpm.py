@@ -654,234 +654,379 @@ else:
     st.info("✅ Adatok normalizálva! A Tab 3-ban már lehet az új demográfia mezőkkel tanítani a modellt.")
 
 
-# ============================================================================
-# TAB 2: FÁZIS 2 - HIRDETÉS ANALYZER (TELJES REIMPLEMENTÁCIÓ)
-# ============================================================================
+# ============================================
+# TAB 2: HIRDETÉS ANALYZER + DEMOGRÁFIA (JAVÍTOTT MODELLEL)
+# ============================================
 
+# Segédfüggvények
+def analyze_text(text):
+    """NLP elemzés szövegből"""
+    if not text or len(text) < 3:
+        return 0.5, 0.5, 0, 0.5
+    
+    text_lower = text.lower()
+    
+    # Emotion score
+    emotion_words = ['boldogság', 'szeretet', 'bizalom', 'biztonság', 'közösség', 'család', 'szép', 'amazing', 'love', 'happy']
+    emotion_count = sum(1 for word in emotion_words if word in text_lower)
+    emotion_score = min(0.95, 0.3 + emotion_count * 0.1)
+    
+    # Attention score
+    attention_words = ['azonnal', 'most', 'szenzációs', 'jó', 'exkluzív', 'revolutionary']
+    attention_count = sum(1 for word in attention_words if word in text_lower)
+    attention_score = min(0.95, 0.3 + attention_count * 0.08)
+    
+    # Urgency/FOMO
+    urgency_words = ['most', 'azonnal', 'hamar', 'korlátozott', 'csak ma', 'limited time']
+    urgency_fomo = 1 if any(word in text_lower for word in urgency_words) else 0
+    
+    # Personalization
+    personal_words = ['te', 'neked', 'nekem', 'mi', 'your', 'personal']
+    personal_count = sum(1 for word in personal_words if word in text_lower)
+    personalization = min(0.95, 0.2 + personal_count * 0.12)
+    
+    return emotion_score, attention_score, urgency_fomo, personalization
+
+
+def analyze_image_simple(uploaded_image):
+    """Egyszerű kép elemzés PIL-lel"""
+    if uploaded_image is None:
+        return 0.7
+    
+    try:
+        image = Image.open(uploaded_image)
+        image = image.convert('RGB')
+        
+        # Pixel adatok
+        pixels = np.array(image)
+        
+        # Kontraszt kiszámítása
+        gray = np.mean(pixels, axis=2)
+        contrast = np.std(gray) / (np.mean(gray) + 1)
+        contrast_score = min(1.0, contrast / 100)
+        
+        return max(0.3, min(1.0, contrast_score))
+    except:
+        return 0.7
+
+
+# ============================================
+# MODEL CACHE - TAB 2 SZÁMÁRA
+# ============================================
+@st.cache_resource
+def get_model_for_tab2():
+    """Modell betöltése/tanítása Tab 2 számára"""
+    if df is None or len(df) == 0:
+        return None
+    
+    features = ['platformencoded', 'emotionscore', 'attentionscore', 'socialproof', 
+                'urgencyfomo', 'visualcontrast', 'personalization', 'age', 'gender', 
+                'device', 'region_encoded', 'budget', 'cpc', 'ctr']
+    
+    # Ellenőrizd, hogy az összes feature létezik
+    missing_features = [f for f in features if f not in df.columns]
+    if missing_features:
+        # Pótold az hiányzó oszlopokat
+        for feat in missing_features:
+            df[feat] = 0
+    
+    X = df[features].fillna(0)
+    y = df['roas'].fillna(0)
+    
+    model_tab2 = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=10)
+    model_tab2.fit(X, y)
+    
+    return model_tab2
+
+# Modell inicializálása
+model_tab2 = get_model_for_tab2()
+
+
+# ============================================
+# TAB 2 UI
+# ============================================
 with tab2:
-    st.markdown("### 🖼️ Fázis 2: Hirdetés Neuromarketing Analízis")
+    st.markdown("### 🎯 Hirdetés Automatikus Analízise + Demográfia")
     
-    col1, col2 = st.columns(2)
+    # === DEMOGRÁFIAI INPUT MEZŐK ===
+    st.markdown("#### 👥 Célközönség Paraméterek")
     
-    with col1:
-        st.markdown("**📸 Hirdetés Kép**")
-        uploaded_image = st.file_uploader("Válassz képet", type=["jpg", "jpeg", "png"], key="image_analyzer")
-        
+    col_demo1, col_demo2, col_demo3 = st.columns(3)
+    
+    with col_demo1:
+        st.markdown("**Korcsoport**")
+        age_group = st.selectbox(
+            "Válaszd ki a cél korosztályt",
+            ["18-24", "25-34", "35-44", "45-54", "55+"],
+            index=1,
+            key="age_tab2"
+        )
+    
+    with col_demo2:
+        st.markdown("**Nem**")
+        gender = st.selectbox(
+            "Cél nem",
+            ["Mixed", "Férfi", "Nő"],
+            index=0,
+            key="gender_tab2"
+        )
+    
+    with col_demo3:
+        st.markdown("**Régió**")
+        region = st.selectbox(
+            "Földrajzi célzás",
+            ["Budapest", "Vidék", "Országos"],
+            index=1,
+            key="region_tab2"
+        )
+    
+    # === ESZKÖZ + KAMPÁNY ===
+    col_dev1, col_dev2 = st.columns(2)
+    
+    with col_dev1:
+        device = st.selectbox(
+            "Eszköz típus",
+            ["Mobile", "Desktop", "Tablet"],
+            index=0,
+            key="device_tab2"
+        )
+    
+    with col_dev2:
+        campaign_name = st.text_input(
+            "Kampány neve (opcionális)",
+            value="New Campaign",
+            key="campaign_tab2"
+        )
+    
+    # === KÉP ÉS SZÖVEG FELTÖLTÉS ===
+    st.markdown("#### 🖼️ Kép + Szöveg Elemzés")
+    
+    col_img1, col_img2 = st.columns([1, 2])
+    
+    with col_img1:
+        uploaded_image = st.file_uploader("📸 Töltsd fel a hirdetés képet", type=['png', 'jpg', 'jpeg'], key="img_upload_tab2")
         if uploaded_image:
-            image_data = Image.open(uploaded_image)
-            st.image(image_data, use_column_width=True)
-            visual_contrast, attention_img = analyze_image(uploaded_image)
-        else:
-            visual_contrast, attention_img = 0.6, 0.6
+            image = Image.open(uploaded_image)
+            st.image(image, caption="Feltöltött hirdetés", use_column_width=True)
     
-    with col2:
-        st.markdown("**📝 Hirdetés Szöveg**")
-        ad_text = st.text_area("Másold ide a hirdetés szövegét", height=150,
-                              placeholder="Pl: 'Csoda módon új megoldás! Csak ma 50% kedvezmény!'", 
-                              key="text_analyzer")
+    with col_img2:
+        ad_text = st.text_area(
+            "📝 Hirdetés szöveg (headline + leírás)",
+            placeholder="Pl. 'Csak 48 óra! 50% kedvezmény Vintage Beauty kollekcióra!'",
+            height=100,
+            key="ad_text_tab2"
+        )
+    
+    # === NEUROMARKETING + DEMOGRÁFIAI SCORE-OK ===
+    if st.button("🚀 Analízis indítása", type="primary", key="analyze_tab2"):
         
-        if ad_text:
-            emotion_txt, attention_txt, urgency_txt, personal_txt = analyze_text(ad_text)
-        else:
-            emotion_txt, attention_txt, urgency_txt, personal_txt = 0.5, 0.5, 0, 0.5
+        # 1. NEUROMARKETING SCORE-OK (kép/szöveg alapján)
+        emotion_score_val, attention_score_val, urgency_fomo_val, personalization_val = analyze_text(ad_text)
+        visual_contrast_val = analyze_image_simple(uploaded_image)
+        social_proof_val = 8  # Default
+        
+        # 2. DEMOGRÁFIAI ENCODING
+        age_encoded = {'18-24': 0, '25-34': 1, '35-44': 2, '45-54': 3, '55+': 4}[age_group]
+        gender_encoded = {'Mixed': 2, 'Férfi': 0, 'Nő': 1}[gender]
+        device_encoded = {'Mobile': 1, 'Desktop': 0, 'Tablet': 2}[device]
+        region_encoded = 1 if region == "Budapest" else 0
+        
+        # === EREDMÉNYEK MEGJELENÍTÉSE ===
+        st.markdown("#### 📈 Analízis Eredmények")
+        
+        # Neuromarketing score-ok
+        col_score1, col_score2, col_score3, col_score4 = st.columns(4)
+        with col_score1:
+            st.metric("Emotion Score", f"{emotion_score_val:.2f}", "🧠 Érzelmi hatás")
+        with col_score2:
+            st.metric("Attention Score", f"{attention_score_val:.2f}", "👁️ Figyelem")
+        with col_score3:
+            st.metric("Visual Contrast", f"{visual_contrast_val:.2f}", "🎨 Kontraszt")
+        with col_score4:
+            st.metric("Urgency/FOMO", f"{int(urgency_fomo_val)}", "⏰ Sietség")
+        
+        # Demográfiai score-ok
+        st.markdown("#### 👥 Demográfiai Profil")
+        
+        col_demo_score1, col_demo_score2, col_demo_score3, col_demo_score4 = st.columns(4)
+        with col_demo_score1:
+            st.metric("Korcsoport", age_group, f"Kód: {age_encoded}")
+        with col_demo_score2:
+            st.metric("Nem", gender, f"Kód: {gender_encoded}")
+        with col_demo_score3:
+            st.metric("Eszköz", device, f"Kód: {device_encoded}")
+        with col_demo_score4:
+            st.metric("Régió", region, f"Kód: {region_encoded}")
+        
+        # ============================================
+# === ROAS ELŐREJELZÉS (AUTO-FILL VERZIÓ) ===
+# ============================================
+st.markdown("#### 💰 ROAS Előrejelzés")
 
-    if uploaded_image or ad_text:
-        st.markdown("---")
-        st.subheader("🤖 Automatikus AI Pontozás")
-        
-        emotion_score = min(0.95, (emotion_txt * 0.7 + attention_img * 0.3))
-        attention_score = min(0.95, (attention_txt * 0.6 + visual_contrast * 0.4))
-        urgency_fomo = urgency_txt
-        personalization = personal_txt
-        social_proof_auto = 5
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.metric("❤️ Emotion Score", f"{emotion_score:.2f}/1.0")
-            with col_b:
-                st.metric("👁️ Attention Score", f"{attention_score:.2f}/1.0")
-        with col2:
-            col_c, col_d = st.columns(2)
-            with col_c:
-                st.metric("🎨 Visual Contrast", f"{visual_contrast:.2f}/1.0")
-            with col_d:
-                st.metric("🎯 Personalization", f"{personalization:.2f}/1.0")
+# Auto-fill függvény
+@st.cache_data
+def get_recommended_values(age_encoded, gender_encoded, device_encoded, region_encoded, platform):
+    """Saját adatokból javasolt értékek számítása"""
+    if df is None or len(df) == 0:
+        return 500000, 300, 2.5
+    
+    # Encoding
+    plat_enc = {'Facebook': 0, 'Google Ads': 1, 'TikTok': 2}.get(platform, 0)
+    
+    # Szűrés: hasonló demográfiájú kampányok
+    filtered_df = df[
+        (df.get('age', 1) == age_encoded) |
+        (df.get('gender', 2) == gender_encoded) |
+        (df.get('region_encoded', 1) == region_encoded) |
+        (df.get('platformencoded', 0) == plat_enc)
+    ]
+    
+    if len(filtered_df) > 0:
+        # Átlagok
+        avg_budget = filtered_df['budget'].mean() if 'budget' in filtered_df else 500000
+        avg_cpc = filtered_df['cpc'].mean() if 'cpc' in filtered_df else 300
+        avg_ctr = filtered_df['ctr'].mean() if 'ctr' in filtered_df else 2.5
+    else:
+        # Fallback: globális átlag
+        avg_budget = df['budget'].mean() if 'budget' in df else 500000
+        avg_cpc = df['cpc'].mean() if 'cpc' in df else 300
+        avg_ctr = df['ctr'].mean() if 'ctr' in df else 2.5
+    
+    return int(avg_budget), int(avg_cpc), round(avg_ctr, 2)
 
-        st.markdown("---")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("👍 Social Proof", f"{social_proof_auto}/20")
-        with col2:
-            urgency_status = "✅ VAN" if urgency_fomo else "❌ NINCS"
-            st.metric("⏰ FOMO/Urgency", urgency_status)
+# Demográfiai paraméterek (már megvannak, de újra referenciáljuk)
+age_encoded = {'18-24': 0, '25-34': 1, '35-44': 2, '45-54': 3, '55+': 4}[age_group]
+gender_encoded = {'Mixed': 2, 'Férfi': 0, 'Nő': 1}[gender]
+device_encoded = {'Mobile': 1, 'Desktop': 0, 'Tablet': 2}[device]
+region_encoded = 1 if region == "Budapest" else 0
+plat_enc = {'Facebook': 0, 'Google Ads': 1, 'TikTok': 2}[platform]
 
-        st.markdown("---")
+# Javasolt értékek
+rec_budget, rec_cpc, rec_ctr = get_recommended_values(age_encoded, gender_encoded, device_encoded, region_encoded, platform)
+
+# === TITLE + INFO ICON ===
+col_title, col_info = st.columns([0.9, 0.1])
+with col_title:
+    st.markdown("**💰 ROAS Előrejelzés**")
+with col_info:
+    st.markdown(
+        f"""
+        <div title="Az előrejelzés az Ön korábbi kampányainak neuromarketing metrikáik és 
+        demográfiai jellemzőik alapján készül. A javasolt költségvetés, CPC és CTR az 
+        azonos paraméterekkel futtatott kampányok átlagaiból származik.">
+            <span style='font-size: 20px; cursor: help;'>ℹ️</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+st.divider()
+
+# === INPUT MEZŐK (JAVASOLT ÉRTÉKEKKEL) ===
+col_b1, col_b2, col_b3 = st.columns(3)
+
+with col_b1:
+    budget = st.number_input(
+        "Költségvetés HUF",
+        min_value=10000,
+        max_value=5000000,
+        value=rec_budget,
+        step=50000,
+        key="budget_tab2_auto",
+        help=f"Javasolt: {rec_budget:,} HUF (saját kampányok átlaga)"
+    )
+
+with col_b2:
+    cpc = st.number_input(
+        "Várt CPC HUF",
+        min_value=10,
+        max_value=1000,
+        value=rec_cpc,
+        step=10,
+        key="cpc_tab2_auto",
+        help=f"Javasolt: {rec_cpc} HUF (saját kampányok átlaga)"
+    )
+
+with col_b3:
+    ctr = st.number_input(
+        "Várt CTR %",
+        min_value=0.1,
+        max_value=15.0,
+        value=rec_ctr,
+        step=0.1,
+        key="ctr_tab2_auto",
+        help=f"Javasolt: {rec_ctr}% (saját kampányok átlaga)"
+    )
+
+# Platform választás
+col_plat_label, col_plat_select = st.columns([1, 3])
+with col_plat_label:
+    st.markdown("**Platform**")
+with col_plat_select:
+    platform = st.selectbox(
+        "Válassz platformot",
+        ["Facebook", "Google Ads", "TikTok"],
+        index=0,
+        label_visibility="collapsed",
+        key="platform_tab2_auto"
+    )
+
+st.divider()
+
+# === ELŐREJELZÉS GOMB ===
+if st.button("🔮 ROAS Előrejelzés", type="primary", key="predict_button_tab2", use_container_width=True):
+    
+    # Input data összeállítása
+    input_data = pd.DataFrame({
+        'platformencoded': [plat_enc],
+        'emotionscore': [emotion_score_val],
+        'attentionscore': [attention_score_val],
+        'socialproof': [social_proof_val],
+        'urgencyfomo': [urgency_fomo_val],
+        'visualcontrast': [visual_contrast_val],
+        'personalization': [personalization_val],
+        'age': [age_encoded],
+        'gender': [gender_encoded],
+        'device': [device_encoded],
+        'region_encoded': [region_encoded],
+        'budget': [budget],
+        'cpc': [cpc],
+        'ctr': [ctr]
+    })
+    
+    if model_tab2 is not None:
+        try:
+            roas_pred = model_tab2.predict(input_data)[0]
+            revenue = budget * roas_pred
+            profit = revenue - budget
+            
+            # Eredmények megjelenítése
+            col_roas1, col_roas2, col_roas3 = st.columns(3)
+            with col_roas1:
+                st.metric("🔮 Várt ROAS", f"{roas_pred:.2f}x", delta=f"+{(roas_pred-1)*100:.0f}%")
+            with col_roas2:
+                st.metric("💵 Várt Bevétel", f"{revenue:,.0f} HUF")
+            with col_roas3:
+                st.metric("💰 Profit", f"{profit:,.0f} HUF")
+            
+            # Magyarázat
+            st.info(f"""
+            **📊 Előrejelzés alapadatai:**
+            - Neuromarketing score-ok: emotion={emotion_score_val:.2f}, attention={attention_score_val:.2f}
+            - Demográfia: {age_group} éves, {gender}, {device}, {region}
+            - Platform: {platform}
+            - Költségvetés: {budget:,} HUF @ {cpc} HUF CPC, {ctr}% CTR
+            """)
+            
+            st.success("✅ Előrejelzés kész!")
         
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.markdown("**Platform**")
-            platform_auto = st.selectbox("Platform", ["Facebook", "Google Ads", "TikTok"], key="platform_analyzer")
-        
-        with col2:
-            st.markdown("**Hirdetési Költségvetés (HUF)**")
-            budget_auto = st.number_input("Hirdetési Költségvetés", 10000, 5000000, 500000, 10000, key="budget_analyzer")
-        
-        with col3:
-            st.markdown("**Várható CPC (HUF)**")
-            cpc_auto = st.number_input("Várható CPC", 10, 1000, 300, 10, key="cpc_analyzer")
-        
-        ctr_auto = 2.0 + (attention_score * 3)
-        
-        if st.button("🔮 ROAS Kalkulálás (Auto-Pontok)", type="primary", key="auto_prediction"):
-            # ===== AUTO-TRAIN MODELL HA NEM LÉTEZIK =====
-            if st.session_state.trained_model is None:
-                with st.spinner("🧠 Modell tanítása Demo adatokkal..."):
-                    df_demo = load_demo_data()
-                    if 'platform' in df_demo.columns:
-                        df_demo['platform_encoded'] = df_demo['platform'].map(
-                            {'Facebook': 0, 'Google Ads': 1, 'TikTok': 2}
-                        ).fillna(0).astype(int)
-                    model, rmse, r2, features = train_model(df_demo)
-                    st.session_state.trained_model = (model, features)
-                    st.success(f"✅ Modell tanítva! R²: {r2:.3f}, RMSE: {rmse:.3f}")
-            else:
-                model, features = st.session_state.trained_model
-            
-            plat_enc = {"Facebook": 0, "Google Ads": 1, "TikTok": 2}[platform_auto]
-            
-            input_data = pd.DataFrame({
-                'platform_encoded': [plat_enc],
-                'emotion_score': [emotion_score],
-                'attention_score': [attention_score],
-                'social_proof': [social_proof_auto],
-                'urgency_fomo': [int(urgency_fomo)],
-                'visual_contrast': [visual_contrast],
-                'personalization': [personalization],
-                'budget': [budget_auto],
-                'cpc': [cpc_auto],
-                'ctr': [ctr_auto / 100]
-            })
-            
-            roas_current = model.predict(input_data)[0]
-            revenue_current = budget_auto * roas_current
-            profit_current = revenue_current - budget_auto
-            
-            st.markdown("---")
-            st.subheader("📊 Jelenlegi Hirdetés - Előrejelzés")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("💰 Várható ROAS", f"{roas_current:.2f}x", delta=f"+{roas_current-1:.2f}x profit")
-            with col2:
-                st.metric("💵 Bevétel", f"{revenue_current:,.0f} HUF", delta=f"+{profit_current:,.0f} HUF")
-            with col3:
-                st.metric("🎯 CTR", f"{ctr_auto:.1f}%")
-            with col4:
-                st.metric("💳 CPC", f"{cpc_auto:.0f} HUF")
-            
-            st.markdown("---")
-            st.subheader("💡 Elemzési Javaslatok")
-            
-            suggestions = []
-            
-            if emotion_score < 0.6:
-                suggestions.append("📈 **Érzelmi Engagement Növelése**: Erősítsd az érzelmi triggereket (szeretet, közösség, biztonság, boldogság). Potenciális hatás: **+0.5-1.0x ROAS**")
-            
-            if attention_score < 0.7:
-                suggestions.append("👁️ **Figyelem Növelése Az Első 3 Másodpercben**: Használj arcot (azonnal felismerhető), magas kontraszt, mozgás az elején. Potenciális hatás: **+0.3-0.7x ROAS**")
-            
-            if social_proof_auto < 5:
-                suggestions.append("👍 **Social Proof Maximalizálása**: Adj hozzá testimonial videókat, 4.8⭐ értékeléseket, \"500+ elégedett ügyfél\" badget. Potenciális hatás: **+0.4-0.6x ROAS**")
-            
-            if not urgency_fomo:
-                suggestions.append("⏰ **FOMO/Urgency Elem Hozzáadása**: Countdown timer, \"csak 3 db maradt\", \"48 óra akció\", limited offer. Potenciális hatás: **+0.3-0.5x ROAS**")
-            
-            if visual_contrast < 0.8:
-                suggestions.append("🎨 **Vizuális Pop Növelése**: Élénk, kontrasztos színek, before-after képek, animációk. Potenciális hatás: **+0.2-0.4x ROAS**")
-            
-            if personalization < 0.6:
-                suggestions.append("🎯 **Personalizáció Javítása**: Dinamikus szöveg (felhasználó neve), lokális referenciák, targeting finomítása. Potenciális hatás: **+0.2-0.3x ROAS**")
-            
-            if suggestions:
-                for sugg in suggestions:
-                    st.info(sugg)
-            else:
-                st.success("✅ Kiváló paraméterek! Az ad már jól optimalizált!")
-            
-            st.markdown("---")
-            st.subheader("🚀 What-If Szimuláció - Javított Hirdetés")
-            st.markdown("**Ha megvalósítod az alább javasolt módosításokat, itt az várható eredmény:**")
-            
-            emotion_improved = emotion_score
-            attention_improved = attention_score
-            urgency_improved = urgency_fomo
-            personalization_improved = personalization
-            visual_improved = visual_contrast
-            
-            if emotion_score < 0.7:
-                emotion_improved = min(0.95, emotion_score + 0.15)
-            if attention_score < 0.8:
-                attention_improved = min(0.95, attention_score + 0.15)
-            if urgency_fomo == 0:
-                urgency_improved = 1
-            if personalization < 0.6:
-                personalization_improved = min(0.95, personalization + 0.15)
-            if visual_contrast < 0.8:
-                visual_improved = min(0.95, visual_contrast + 0.15)
-            
-            input_data_improved = pd.DataFrame({
-                'platform_encoded': [plat_enc],
-                'emotion_score': [emotion_improved],
-                'attention_score': [attention_improved],
-                'social_proof': [social_proof_auto],
-                'urgency_fomo': [int(urgency_improved)],
-                'visual_contrast': [visual_improved],
-                'personalization': [personalization_improved],
-                'budget': [budget_auto],
-                'cpc': [cpc_auto],
-                'ctr': [ctr_auto / 100]
-            })
-            
-            roas_improved = model.predict(input_data_improved)[0]
-            revenue_improved = budget_auto * roas_improved
-            profit_improved = revenue_improved - budget_auto
-            
-            roas_delta = roas_improved - roas_current
-            revenue_delta = revenue_improved - revenue_current
-            profit_delta = profit_improved - profit_current
-            roi_improvement = ((roas_improved - roas_current) / roas_current * 100) if roas_current > 0 else 0
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("💰 Javított ROAS", f"{roas_improved:.2f}x",
-                         delta=f"+{roas_delta:.2f}x ({roi_improvement:+.1f}%)" if roas_delta != 0 else "Egyezés")
-            with col2:
-                st.metric("💵 Javított Bevétel", f"{revenue_improved:,.0f} HUF",
-                         delta=f"+{revenue_delta:,.0f} HUF" if revenue_delta > 0 else "Nincs változás")
-            with col3:
-                st.metric("📈 Extra Profit", f"{profit_delta:,.0f} HUF",
-                         delta="🎯 Plusz nyereség" if profit_delta > 0 else "Egyezés")
-            with col4:
-                st.metric("✨ Javítás %", f"{roi_improvement:.1f}%" if roi_improvement > 0 else "—")
-            
-            st.markdown("---")
-            st.subheader("📊 Részletes Összehasonlítás")
-            
-            comparison_df = pd.DataFrame({
-                'Metrika': ['Emotion Score', 'Attention Score', 'Visual Contrast', 'Personalization', 'FOMO/Urgency'],
-                'Jelenlegi': [f"{emotion_score:.2f}", f"{attention_score:.2f}", f"{visual_contrast:.2f}",
-                            f"{personalization:.2f}", "✅ VAN" if urgency_fomo else "❌ NINCS"],
-                'Javított': [f"{emotion_improved:.2f}", f"{attention_improved:.2f}", f"{visual_improved:.2f}",
-                           f"{personalization_improved:.2f}", "✅ VAN"],
-                'Javulás': [f"+{emotion_improved-emotion_score:.2f}", f"+{attention_improved-attention_score:.2f}",
-                          f"+{visual_improved-visual_contrast:.2f}", f"+{personalization_improved-personalization:.2f}",
-                          "✅ Hozzáadva" if urgency_improved > urgency_fomo else "—"]
-            })
-            
-            st.table(comparison_df)
+        except Exception as e:
+            st.error(f"⚠️ Hiba az előrejelzésnél: {str(e)}")
+    else:
+        st.warning("⚠️ A modell még nem elérhető. Kérjük, tölts fel adatokat a Tab 1-ben!")
+
+
+
 
 # ============================================================================
 # TAB 3: FÁZIS 3 - MODEL TRAINING

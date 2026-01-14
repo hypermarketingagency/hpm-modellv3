@@ -6,7 +6,14 @@ import io
 from PIL import Image
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score
-from analytics.rollups import build_rollups, filter_segment, segment_summary
+from analytics.rollups import filter_segment, segment_summary
+from analytics.import_helpers import (
+    annotate_source_columns,
+    build_dashboard_summary,
+    cached_rollups,
+    load_uploaded_dataframe,
+    render_pulsing_logo,
+)
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -348,80 +355,6 @@ def format_dataframe_for_display(df):
             display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "–")
     return display_df
 
-def load_uploaded_dataframe(uploaded_file):
-    if uploaded_file.name.endswith(".csv"):
-        return pd.read_csv(uploaded_file, encoding="utf-8-sig")
-    raw_df = pd.read_excel(uploaded_file)
-    if uploaded_file.name.endswith((".xlsx", ".xls")):
-        raw_df = clean_excel_structure(raw_df)
-    return raw_df
-
-def detect_breakdown_type(df):
-    if "geo_city" in df.columns and df["geo_city"].notna().any():
-        return "geo"
-    if "geo_region" in df.columns and df["geo_region"].notna().any():
-        return "geo"
-    if "age_group" in df.columns or "gender" in df.columns:
-        return "demography"
-    return "general"
-
-def annotate_source_columns(df, filename):
-    df = df.copy()
-    df["source_file"] = filename
-    df["breakdown_type"] = detect_breakdown_type(df)
-    return df
-
-def render_pulsing_logo():
-    pulsing_html = f"""
-        <style>
-        .pulse-logo {{
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 12px 0 20px 0;
-        }}
-        .pulse-logo img {{
-            width: 110px;
-            height: auto;
-            animation: pulse 1.4s ease-in-out infinite;
-        }}
-        @keyframes pulse {{
-            0% {{ transform: scale(0.95); opacity: 0.6; }}
-            50% {{ transform: scale(1.05); opacity: 1; }}
-            100% {{ transform: scale(0.95); opacity: 0.6; }}
-        }}
-        </style>
-        <div class="pulse-logo">
-            <img src="{logo_url}" alt="HYPER logo" />
-        </div>
-    """
-    container = st.empty()
-    container.markdown(pulsing_html, unsafe_allow_html=True)
-    return container
-
-@st.cache_data(show_spinner=False)
-def build_dashboard_summary(df):
-    summary = df.groupby("platform").agg({
-        "spend": "sum",
-        "conversions": "sum",
-        "conversion_value": "sum",
-        "impressions": "sum",
-    }).round(2)
-    return summary.reset_index()
-
-@st.cache_data(show_spinner=False)
-def build_segment_rollup(df, group_cols):
-    metrics = {
-        "spend": "sum",
-        "conversions": "sum",
-        "conversion_value": "sum",
-        "impressions": "sum",
-    }
-    return df.groupby(group_cols).agg(metrics).reset_index()
-
-@st.cache_data(show_spinner=False)
-def cached_rollups(df):
-    return build_rollups(df)
 
 # ---------------------------------------------------------------------------
 # 🧠 NEUROMARKETING FUNCTIONS (Fázis 2)
@@ -571,7 +504,7 @@ with tab1:
 
         if uploaded_file:
             try:
-                raw_df = load_uploaded_dataframe(uploaded_file)
+                raw_df = load_uploaded_dataframe(uploaded_file, clean_excel_structure)
 
                 st.session_state.uploaded_data = raw_df
 
@@ -612,7 +545,7 @@ with tab1:
                 st.dataframe(raw_df.head(3), use_container_width=True)
 
                 if st.button("✅ Normalizálás", type="primary"):
-                    pulse_container = render_pulsing_logo()
+                    pulse_container = render_pulsing_logo(logo_url)
                     try:
                         normalized_df = normalize_data(raw_df, mapping, st.session_state.platform)
                         st.session_state.normalized_data = normalized_df
@@ -644,7 +577,7 @@ with tab1:
 
             for idx, file in enumerate(uploaded_files, start=1):
                 try:
-                    raw_df = load_uploaded_dataframe(file)
+                    raw_df = load_uploaded_dataframe(file, clean_excel_structure)
                     detected_platform = detect_platform(raw_df.columns)
 
                     if detected_platform not in ["facebook", "unknown"]:
@@ -674,7 +607,7 @@ with tab1:
                     st.error(f"❌ {file.name} betöltési hiba: {str(e)}")
 
             if st.button("✅ Normalizálás (több fájl)", type="primary"):
-                pulse_container = render_pulsing_logo()
+                pulse_container = render_pulsing_logo(logo_url)
                 if normalized_dfs:
                     combined_df = pd.concat(normalized_dfs, ignore_index=True)
                     st.session_state.normalized_data = combined_df

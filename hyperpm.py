@@ -355,32 +355,8 @@ def format_dataframe_for_display(df):
             display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "–")
     return display_df
 
- codex/review-current-app-functionality-and-plan-development-lbs9i5
 
 # ---------------------------------------------------------------------------
-def load_uploaded_dataframe(uploaded_file):
-    if uploaded_file.name.endswith(".csv"):
-        return pd.read_csv(uploaded_file, encoding="utf-8-sig")
-    raw_df = pd.read_excel(uploaded_file)
-    if uploaded_file.name.endswith((".xlsx", ".xls")):
-        raw_df = clean_excel_structure(raw_df)
-    return raw_df
-
-def detect_breakdown_type(df):
-    if "geo_city" in df.columns and df["geo_city"].notna().any():
-        return "geo"
-    if "age_group" in df.columns or "gender" in df.columns:
-        return "demography"
-    return "general"
-
-def annotate_source_columns(df, filename):
-    df = df.copy()
-    df["source_file"] = filename
-    df["breakdown_type"] = detect_breakdown_type(df)
-    return df
-
-# ============================================================================
-main
 # 🧠 NEUROMARKETING FUNCTIONS (Fázis 2)
 # ---------------------------------------------------------------------------
 
@@ -528,10 +504,7 @@ with tab1:
 
         if uploaded_file:
             try:
-codex/review-current-app-functionality-and-plan-development-lbs9i5
                 raw_df = load_uploaded_dataframe(uploaded_file, clean_excel_structure)
-                raw_df = load_uploaded_dataframe(uploaded_file)
-    main
 
                 st.session_state.uploaded_data = raw_df
 
@@ -572,21 +545,15 @@ codex/review-current-app-functionality-and-plan-development-lbs9i5
                 st.dataframe(raw_df.head(3), use_container_width=True)
 
                 if st.button("✅ Normalizálás", type="primary"):
-codex/review-current-app-functionality-and-plan-development-lbs9i5
                     pulse_container = render_pulsing_logo(logo_url)
-
- main
                     try:
                         normalized_df = normalize_data(raw_df, mapping, st.session_state.platform)
                         st.session_state.normalized_data = normalized_df
                         st.success(f"✅ {len(normalized_df)} kampány sikeresen normalizálva!")
                     except Exception as e:
                         st.error(f"❌ Hiba: {str(e)}")
- codex/review-current-app-functionality-and-plan-development-lbs9i5
                     finally:
                         pulse_container.empty()
-
- main
 
             except Exception as e:
                 st.error(f"❌ Hiba: {str(e)}")
@@ -610,11 +577,7 @@ codex/review-current-app-functionality-and-plan-development-lbs9i5
 
             for idx, file in enumerate(uploaded_files, start=1):
                 try:
- codex/review-current-app-functionality-and-plan-development-lbs9i5
                     raw_df = load_uploaded_dataframe(file, clean_excel_structure)
-
-                    raw_df = load_uploaded_dataframe(file)
- main
                     detected_platform = detect_platform(raw_df.columns)
 
                     if detected_platform not in ["facebook", "unknown"]:
@@ -644,19 +607,14 @@ codex/review-current-app-functionality-and-plan-development-lbs9i5
                     st.error(f"❌ {file.name} betöltési hiba: {str(e)}")
 
             if st.button("✅ Normalizálás (több fájl)", type="primary"):
-codex/review-current-app-functionality-and-plan-development-lbs9i5
                 pulse_container = render_pulsing_logo(logo_url)
-
- main
                 if normalized_dfs:
                     combined_df = pd.concat(normalized_dfs, ignore_index=True)
                     st.session_state.normalized_data = combined_df
                     st.success(f"✅ {len(combined_df)} sor sikeresen normalizálva (több fájl)!")
                 else:
                     st.warning("⚠️ Nem sikerült feldolgozható fájlt találni.")
- codex/review-current-app-functionality-and-plan-development-lbs9i5
                 pulse_container.empty()
- main
 
     if st.session_state.normalized_data is not None:
         st.subheader("📊 Normalizált Adatok")
@@ -696,11 +654,7 @@ codex/review-current-app-functionality-and-plan-development-lbs9i5
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
-codex/review-current-app-functionality-and-plan-development-lbs9i5
 # ---------------------------------------------------------------------------
-
-# ============================================================================
- main
 # TAB 2: FÁZIS 2 - HIRDETÉS ANALYZER (TELJES REIMPLEMENTÁCIÓ)
 # ---------------------------------------------------------------------------
 

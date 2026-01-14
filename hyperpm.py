@@ -37,9 +37,14 @@ st.markdown("**Fázis 1-3: Normalizálás → Analízis → Predikció**")
 # ============================================================================
 
 FACEBOOK_EXACT_MAPPING = {
+    "Nap": "date_start",
     "Jelentés kezdete": "date_start",
     "Kampány neve": "campaign_name",
+    "Hirdetéssorozat neve": "adset_name",
+    "Hirdetés neve": "ad_name",
+    "Életkor": "age_group",
     "Kampány teljesítése": "campaign_status",
+    "Megjelenítési állapot": "campaign_status",
     "Elköltött összeg (HUF)": "spend",
     "Megjelenések": "impressions",
     "Elérés": "reach",
@@ -138,6 +143,8 @@ UNIFIED_SCHEMA = {
         ("conversion_value", "float", "Konverziós érték (HUF)"),
     ],
     "recommended": [
+        ("adset_name", "string", "Hirdetéssorozat neve"),
+        ("ad_name", "string", "Hirdetés neve"),
         ("impressions", "int", "Megjelenések"),
         ("clicks", "int", "Kattintások"),
         ("ctr_percent", "percentage", "CTR (%)"),
@@ -334,6 +341,27 @@ def format_dataframe_for_display(df):
             display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "–")
     return display_df
 
+def load_uploaded_dataframe(uploaded_file):
+    if uploaded_file.name.endswith(".csv"):
+        return pd.read_csv(uploaded_file, encoding="utf-8-sig")
+    raw_df = pd.read_excel(uploaded_file)
+    if uploaded_file.name.endswith((".xlsx", ".xls")):
+        raw_df = clean_excel_structure(raw_df)
+    return raw_df
+
+def detect_breakdown_type(df):
+    if "geo_city" in df.columns and df["geo_city"].notna().any():
+        return "geo"
+    if "age_group" in df.columns or "gender" in df.columns:
+        return "demography"
+    return "general"
+
+def annotate_source_columns(df, filename):
+    df = df.copy()
+    df["source_file"] = filename
+    df["breakdown_type"] = detect_breakdown_type(df)
+    return df
+
 # ============================================================================
 # 🧠 NEUROMARKETING FUNCTIONS (Fázis 2)
 # ============================================================================
@@ -467,98 +495,165 @@ with tab1:
     st.markdown("### 📥 Fázis 1: Intelligens CSV/Excel Importer")
     
     st.subheader("1️⃣ CSV/Excel Feltöltés")
-    uploaded_file = st.file_uploader(
-        "Válassz CSV vagy Excel fájlt",
-        type=["csv", "xlsx", "xls"],
-        help="Facebook, Google Ads vagy TikTok export",
+    import_mode = st.radio(
+        "Import mód",
+        ["Egylépcsős feltöltés", "Többlépcsős Facebook (demó + geo)"],
+        horizontal=True,
     )
 
-    if uploaded_file:
-        try:
-            if uploaded_file.name.endswith(".csv"):
-                raw_df = pd.read_csv(uploaded_file, encoding="utf-8-sig")
-            else:
-                raw_df = pd.read_excel(uploaded_file)
+    if import_mode == "Egylépcsős feltöltés":
+        uploaded_file = st.file_uploader(
+            "Válassz CSV vagy Excel fájlt",
+            type=["csv", "xlsx", "xls"],
+            help="Facebook, Google Ads vagy TikTok export",
+        )
 
-            if uploaded_file.name.endswith((".xlsx", ".xls")):
-                raw_df = clean_excel_structure(raw_df)
+        if uploaded_file:
+            try:
+                raw_df = load_uploaded_dataframe(uploaded_file)
 
-            st.session_state.uploaded_data = raw_df
+                st.session_state.uploaded_data = raw_df
 
-            st.success(f"✅ Betöltve: {uploaded_file.name}")
-            st.info(f"📊 Sorok: {len(raw_df)}, Oszlopok: {len(raw_df.columns)}")
+                st.success(f"✅ Betöltve: {uploaded_file.name}")
+                st.info(f"📊 Sorok: {len(raw_df)}, Oszlopok: {len(raw_df.columns)}")
 
-            detected_platform = detect_platform(raw_df.columns)
-            st.session_state.platform = detected_platform
+                detected_platform = detect_platform(raw_df.columns)
+                st.session_state.platform = detected_platform
 
-            if detected_platform == "unknown":
-                st.warning("⚠️ Nem sikerült felismerni a platform típusát. Válassz manuálisan:")
-                selected_platform = st.selectbox("Platform:", ["Facebook", "Google Ads", "TikTok"])
-                platform_map = {"Facebook": "facebook", "Google Ads": "google_ads", "TikTok": "tiktok"}
-                st.session_state.platform = platform_map[selected_platform]
-            else:
-                platform_names = {"facebook": "Facebook", "google_ads": "Google Ads", "tiktok": "TikTok"}
-                platform_name = platform_names[detected_platform]
-                st.success(f"✅ Felismert platform: {platform_name}")
+                if detected_platform == "unknown":
+                    st.warning("⚠️ Nem sikerült felismerni a platform típusát. Válassz manuálisan:")
+                    selected_platform = st.selectbox("Platform:", ["Facebook", "Google Ads", "TikTok"])
+                    platform_map = {"Facebook": "facebook", "Google Ads": "google_ads", "TikTok": "tiktok"}
+                    st.session_state.platform = platform_map[selected_platform]
+                else:
+                    platform_names = {"facebook": "Facebook", "google_ads": "Google Ads", "tiktok": "TikTok"}
+                    platform_name = platform_names[detected_platform]
+                    st.success(f"✅ Felismert platform: {platform_name}")
 
-            st.subheader("2️⃣ Automata Oszlop Felismerés")
-            mapping, unmapped = create_mapping_from_platform(raw_df.columns, st.session_state.platform)
-            st.session_state.mapping = mapping
+                st.subheader("2️⃣ Automata Oszlop Felismerés")
+                mapping, unmapped = create_mapping_from_platform(raw_df.columns, st.session_state.platform)
+                st.session_state.mapping = mapping
 
-            st.markdown("#### ✅ Leképezett oszlopok:")
-            mapping_display = [
-                {"CSV Oszlop": csv_col, "Unified Field": unified_col}
-                for csv_col, unified_col in sorted(mapping.items())
-            ]
-            if mapping_display:
-                st.dataframe(pd.DataFrame(mapping_display), use_container_width=True)
+                st.markdown("#### ✅ Leképezett oszlopok:")
+                mapping_display = [
+                    {"CSV Oszlop": csv_col, "Unified Field": unified_col}
+                    for csv_col, unified_col in sorted(mapping.items())
+                ]
+                if mapping_display:
+                    st.dataframe(pd.DataFrame(mapping_display), use_container_width=True)
 
-            if unmapped:
-                st.markdown(f"#### ⚠️ Felismeretlen oszlopok ({len(unmapped)}):")
-                for col in unmapped[:5]:
-                    st.text(f"• {col}")
+                if unmapped:
+                    st.markdown(f"#### ⚠️ Felismeretlen oszlopok ({len(unmapped)}):")
+                    for col in unmapped[:5]:
+                        st.text(f"• {col}")
 
-            st.subheader("📋 Adatok Előnézete")
-            st.dataframe(raw_df.head(3), use_container_width=True)
+                st.subheader("📋 Adatok Előnézete")
+                st.dataframe(raw_df.head(3), use_container_width=True)
 
-            if st.button("✅ Normalizálás", type="primary"):
+                if st.button("✅ Normalizálás", type="primary"):
+                    try:
+                        normalized_df = normalize_data(raw_df, mapping, st.session_state.platform)
+                        st.session_state.normalized_data = normalized_df
+                        st.success(f"✅ {len(normalized_df)} kampány sikeresen normalizálva!")
+                    except Exception as e:
+                        st.error(f"❌ Hiba: {str(e)}")
+
+            except Exception as e:
+                st.error(f"❌ Hiba: {str(e)}")
+
+    else:
+        st.info(
+            "ℹ️ Többlépcsős Facebook export esetén több fájlt tölts fel (pl. demográfia + geo). "
+            "A rendszer a fájlokat összevonja, de nem végez automatikus összefésülést, hogy elkerülje "
+            "a kampány-dátum alapon létrejövő duplikációkat."
+        )
+        uploaded_files = st.file_uploader(
+            "Válassz több CSV vagy Excel fájlt",
+            type=["csv", "xlsx", "xls"],
+            accept_multiple_files=True,
+            help="Facebook exportok (demográfia + geo)",
+        )
+
+        if uploaded_files:
+            normalized_dfs = []
+            st.subheader("2️⃣ Automata Oszlop Felismerés (több fájl)")
+
+            for idx, file in enumerate(uploaded_files, start=1):
                 try:
-                    normalized_df = normalize_data(raw_df, mapping, st.session_state.platform)
-                    st.session_state.normalized_data = normalized_df
-                    st.success(f"✅ {len(normalized_df)} kampány sikeresen normalizálva!")
+                    raw_df = load_uploaded_dataframe(file)
+                    detected_platform = detect_platform(raw_df.columns)
+
+                    if detected_platform not in ["facebook", "unknown"]:
+                        st.warning(f"⚠️ {file.name}: nem Facebook exportnak tűnik.")
+
+                    mapping, unmapped = create_mapping_from_platform(raw_df.columns, "facebook")
+                    normalized_df = normalize_data(raw_df, mapping, "facebook")
+                    normalized_df = annotate_source_columns(normalized_df, file.name)
+                    normalized_dfs.append(normalized_df)
+
+                    with st.expander(f"📄 {idx}. fájl: {file.name}", expanded=idx == 1):
+                        st.info(f"📊 Sorok: {len(raw_df)}, Oszlopok: {len(raw_df.columns)}")
+                        mapping_display = [
+                            {"CSV Oszlop": csv_col, "Unified Field": unified_col}
+                            for csv_col, unified_col in sorted(mapping.items())
+                        ]
+                        if mapping_display:
+                            st.markdown("#### ✅ Leképezett oszlopok:")
+                            st.dataframe(pd.DataFrame(mapping_display), use_container_width=True)
+                        if unmapped:
+                            st.markdown(f"#### ⚠️ Felismeretlen oszlopok ({len(unmapped)}):")
+                            for col in unmapped[:5]:
+                                st.text(f"• {col}")
+                        st.markdown("#### 📋 Előnézet")
+                        st.dataframe(raw_df.head(3), use_container_width=True)
                 except Exception as e:
-                    st.error(f"❌ Hiba: {str(e)}")
+                    st.error(f"❌ {file.name} betöltési hiba: {str(e)}")
 
-            if st.session_state.normalized_data is not None:
-                st.subheader("📊 Normalizált Adatok")
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    if "spend" in st.session_state.normalized_data.columns:
-                        st.metric("💰 Költség", f"{st.session_state.normalized_data['spend'].sum():,.0f} HUF")
-                with col2:
-                    if "conversion_value" in st.session_state.normalized_data.columns:
-                        st.metric("💵 Érték", f"{st.session_state.normalized_data['conversion_value'].sum():,.0f} HUF")
-                with col3:
-                    if "roas" in st.session_state.normalized_data.columns and st.session_state.normalized_data["roas"].notna().any():
-                        st.metric("📈 ROAS", f"{st.session_state.normalized_data['roas'].mean():.2f}x")
+            if st.button("✅ Normalizálás (több fájl)", type="primary"):
+                if normalized_dfs:
+                    combined_df = pd.concat(normalized_dfs, ignore_index=True)
+                    st.session_state.normalized_data = combined_df
+                    st.success(f"✅ {len(combined_df)} sor sikeresen normalizálva (több fájl)!")
+                else:
+                    st.warning("⚠️ Nem sikerült feldolgozható fájlt találni.")
 
-                display_df = format_dataframe_for_display(st.session_state.normalized_data)
-                st.dataframe(display_df, use_container_width=True)
+    if st.session_state.normalized_data is not None:
+        st.subheader("📊 Normalizált Adatok")
 
-                col1, col2 = st.columns(2)
-                with col1:
-                    csv = st.session_state.normalized_data.to_csv(index=False)
-                    st.download_button("📥 CSV", csv, f"hyper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", "text/csv")
-                with col2:
-                    buffer = io.BytesIO()
-                    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                        st.session_state.normalized_data.to_excel(writer, index=False, sheet_name="Kampanyok")
-                    st.download_button("📥 Excel", buffer.getvalue(), f"hyper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx", 
-                                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        if "breakdown_type" in st.session_state.normalized_data.columns:
+            st.warning(
+                "⚠️ Többlépcsős export esetén az összesítések duplikációt tartalmazhatnak. "
+                "Használd a breakdown_type és source_file oszlopokat a szűréshez."
+            )
 
-        except Exception as e:
-            st.error(f"❌ Hiba: {str(e)}")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if "spend" in st.session_state.normalized_data.columns:
+                st.metric("💰 Költség", f"{st.session_state.normalized_data['spend'].sum():,.0f} HUF")
+        with col2:
+            if "conversion_value" in st.session_state.normalized_data.columns:
+                st.metric("💵 Érték", f"{st.session_state.normalized_data['conversion_value'].sum():,.0f} HUF")
+        with col3:
+            if "roas" in st.session_state.normalized_data.columns and st.session_state.normalized_data["roas"].notna().any():
+                st.metric("📈 ROAS", f"{st.session_state.normalized_data['roas'].mean():.2f}x")
+
+        display_df = format_dataframe_for_display(st.session_state.normalized_data)
+        st.dataframe(display_df, use_container_width=True)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            csv = st.session_state.normalized_data.to_csv(index=False)
+            st.download_button("📥 CSV", csv, f"hyper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", "text/csv")
+        with col2:
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                st.session_state.normalized_data.to_excel(writer, index=False, sheet_name="Kampanyok")
+            st.download_button(
+                "📥 Excel",
+                buffer.getvalue(),
+                f"hyper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
 # ============================================================================
 # TAB 2: FÁZIS 2 - HIRDETÉS ANALYZER (TELJES REIMPLEMENTÁCIÓ)

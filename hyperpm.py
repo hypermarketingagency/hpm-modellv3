@@ -1029,6 +1029,7 @@ with tab4:
             else:
                 breakdown_filter = []
         with filter_cols[1]:
+ codex/review-current-app-functionality-and-plan-development-1im5ro
             show_full_table = st.checkbox(
                 "Teljes tábla megjelenítése (lassú)",
                 value=False,
@@ -1043,6 +1044,11 @@ with tab4:
                     "nagy adatmennyiségnél lassabb lehet."
                 ),
             )
+
+            show_full_table = st.checkbox("Teljes tábla megjelenítése (lassú)", value=False)
+        with filter_cols[2]:
+            rollup_enabled = st.checkbox("Rollupok számítása (lassabb)", value=False)
+ main
 
         if breakdown_filter:
             df = df[df["breakdown_type"].isin(breakdown_filter)]

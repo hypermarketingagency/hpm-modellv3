@@ -1028,8 +1028,8 @@ with tab4:
                 )
             else:
                 breakdown_filter = []
-        with filter_cols[1]:
- codex/review-current-app-functionality-and-plan-development-1im5ro
+        with filter_cols[1]: 
+            codex/review-current-app-functionality-and-plan-development-1im5ro
             show_full_table = st.checkbox(
                 "Teljes tábla megjelenítése (lassú)",
                 value=False,

@@ -6,13 +6,21 @@ import io
 from PIL import Image
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score
-from analytics.rollups import build_rollups, filter_segment, segment_summary
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from analytics.rollups import filter_segment, segment_summary
+from analytics.import_helpers import (
+    annotate_source_columns,
+    build_dashboard_summary,
+    cached_rollups,
+    load_uploaded_dataframe,
+    render_pulsing_logo,
+)
 import warnings
 warnings.filterwarnings('ignore')
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # 🎨 PAGE CONFIG & LOGO
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 st.set_page_config(
     page_title="HYPER - Marketing Campaign Analyzer",
@@ -21,6 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+APP_VERSION = "9.2.7"
 logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
 
 # Header with Logo
@@ -32,14 +41,19 @@ with col_title:
 
 st.markdown("**Fázis 1-3: Normalizálás → Analízis → Predikció**")
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # 📊 HARDKÓDOLT MAPPINGEK (Platform-specifikus)
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 FACEBOOK_EXACT_MAPPING = {
+    "Nap": "date_start",
     "Jelentés kezdete": "date_start",
     "Kampány neve": "campaign_name",
+    "Hirdetéssorozat neve": "adset_name",
+    "Hirdetés neve": "ad_name",
+    "Életkor": "age_group",
     "Kampány teljesítése": "campaign_status",
+    "Megjelenítési állapot": "campaign_status",
     "Elköltött összeg (HUF)": "spend",
     "Megjelenések": "impressions",
     "Elérés": "reach",
@@ -58,6 +72,9 @@ FACEBOOK_EXACT_MAPPING = {
     "Korosztály": "age_group",
     "Nem": "gender",
     "Város": "geo_city",
+    "Régió": "geo_region",
+    "Region": "geo_region",
+    "Megye": "geo_region",
     "Eszköz": "device",
     "Elhelyezés": "placement",
 }
@@ -87,6 +104,8 @@ GOOGLE_ADS_EXACT_MAPPING = {
     "Nem": "gender",
     "City": "geo_city",
     "Város": "geo_city",
+    "Region": "geo_region",
+    "Régió": "geo_region",
     "Device": "device",
     "Eszköz": "device",
     "Placement": "placement",
@@ -121,6 +140,8 @@ TIKTOK_EXACT_MAPPING = {
     "Gender": "gender",
     "City": "geo_city",
     "Location": "geo_city",
+    "Region": "geo_region",
+    "Régió": "geo_region",
     "Device": "device",
     "Placement": "placement",
 }
@@ -138,6 +159,8 @@ UNIFIED_SCHEMA = {
         ("conversion_value", "float", "Konverziós érték (HUF)"),
     ],
     "recommended": [
+        ("adset_name", "string", "Hirdetéssorozat neve"),
+        ("ad_name", "string", "Hirdetés neve"),
         ("impressions", "int", "Megjelenések"),
         ("clicks", "int", "Kattintások"),
         ("ctr_percent", "percentage", "CTR (%)"),
@@ -147,14 +170,15 @@ UNIFIED_SCHEMA = {
         ("age_group", "string", "Korcsoport"),
         ("gender", "string", "Nem"),
         ("geo_city", "string", "Város"),
+        ("geo_region", "string", "Régió/Megye"),
         ("device", "string", "Eszköz"),
         ("placement", "string", "Elhelyezés"),
     ],
 }
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # 🔧 HELPER FUNCTIONS
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 def clean_excel_structure(df):
     """Excel szerkezeti sorok eltávolítása + Total of sorok szűrése"""
@@ -334,9 +358,10 @@ def format_dataframe_for_display(df):
             display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "–")
     return display_df
 
-# ============================================================================
+
+# ---------------------------------------------------------------------------
 # 🧠 NEUROMARKETING FUNCTIONS (Fázis 2)
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 def analyze_text(text):
     """Szöveg AI-alapú analízise"""
@@ -431,9 +456,9 @@ def load_demo_data():
     df['platform'] = df['platform_encoded'].map({0: 'Facebook', 1: 'Google Ads', 2: 'TikTok'})
     return df
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # 💾 SESSION STATE INIT
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 if "uploaded_data" not in st.session_state:
     st.session_state.uploaded_data = None
@@ -448,9 +473,9 @@ if "scores_history" not in st.session_state:
 if "trained_model" not in st.session_state:
     st.session_state.trained_model = None
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # 🎯 MAIN TAB STRUCTURE
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "📥 FÁZIS 1: CSV Import",
@@ -459,110 +484,182 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📊 Dashboard"
 ])
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # TAB 1: FÁZIS 1 - CSV IMPORTER
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 with tab1:
     st.markdown("### 📥 Fázis 1: Intelligens CSV/Excel Importer")
     
     st.subheader("1️⃣ CSV/Excel Feltöltés")
-    uploaded_file = st.file_uploader(
-        "Válassz CSV vagy Excel fájlt",
-        type=["csv", "xlsx", "xls"],
-        help="Facebook, Google Ads vagy TikTok export",
+    import_mode = st.radio(
+        "Import mód",
+        ["Egylépcsős feltöltés", "Többlépcsős Facebook (demó + geo)"],
+        horizontal=True,
     )
 
-    if uploaded_file:
-        try:
-            if uploaded_file.name.endswith(".csv"):
-                raw_df = pd.read_csv(uploaded_file, encoding="utf-8-sig")
-            else:
-                raw_df = pd.read_excel(uploaded_file)
+    if import_mode == "Egylépcsős feltöltés":
+        uploaded_file = st.file_uploader(
+            "Válassz CSV vagy Excel fájlt",
+            type=["csv", "xlsx", "xls"],
+            help="Facebook, Google Ads vagy TikTok export",
+        )
 
-            if uploaded_file.name.endswith((".xlsx", ".xls")):
-                raw_df = clean_excel_structure(raw_df)
+        if uploaded_file:
+            try:
+                raw_df = load_uploaded_dataframe(uploaded_file, clean_excel_structure)
 
-            st.session_state.uploaded_data = raw_df
+                st.session_state.uploaded_data = raw_df
 
-            st.success(f"✅ Betöltve: {uploaded_file.name}")
-            st.info(f"📊 Sorok: {len(raw_df)}, Oszlopok: {len(raw_df.columns)}")
+                st.success(f"✅ Betöltve: {uploaded_file.name}")
+                st.info(f"📊 Sorok: {len(raw_df)}, Oszlopok: {len(raw_df.columns)}")
 
-            detected_platform = detect_platform(raw_df.columns)
-            st.session_state.platform = detected_platform
+                detected_platform = detect_platform(raw_df.columns)
+                st.session_state.platform = detected_platform
 
-            if detected_platform == "unknown":
-                st.warning("⚠️ Nem sikerült felismerni a platform típusát. Válassz manuálisan:")
-                selected_platform = st.selectbox("Platform:", ["Facebook", "Google Ads", "TikTok"])
-                platform_map = {"Facebook": "facebook", "Google Ads": "google_ads", "TikTok": "tiktok"}
-                st.session_state.platform = platform_map[selected_platform]
-            else:
-                platform_names = {"facebook": "Facebook", "google_ads": "Google Ads", "tiktok": "TikTok"}
-                platform_name = platform_names[detected_platform]
-                st.success(f"✅ Felismert platform: {platform_name}")
+                if detected_platform == "unknown":
+                    st.warning("⚠️ Nem sikerült felismerni a platform típusát. Válassz manuálisan:")
+                    selected_platform = st.selectbox("Platform:", ["Facebook", "Google Ads", "TikTok"])
+                    platform_map = {"Facebook": "facebook", "Google Ads": "google_ads", "TikTok": "tiktok"}
+                    st.session_state.platform = platform_map[selected_platform]
+                else:
+                    platform_names = {"facebook": "Facebook", "google_ads": "Google Ads", "tiktok": "TikTok"}
+                    platform_name = platform_names[detected_platform]
+                    st.success(f"✅ Felismert platform: {platform_name}")
 
-            st.subheader("2️⃣ Automata Oszlop Felismerés")
-            mapping, unmapped = create_mapping_from_platform(raw_df.columns, st.session_state.platform)
-            st.session_state.mapping = mapping
+                st.subheader("2️⃣ Automata Oszlop Felismerés")
+                mapping, unmapped = create_mapping_from_platform(raw_df.columns, st.session_state.platform)
+                st.session_state.mapping = mapping
 
-            st.markdown("#### ✅ Leképezett oszlopok:")
-            mapping_display = [
-                {"CSV Oszlop": csv_col, "Unified Field": unified_col}
-                for csv_col, unified_col in sorted(mapping.items())
-            ]
-            if mapping_display:
-                st.dataframe(pd.DataFrame(mapping_display), use_container_width=True)
+                st.markdown("#### ✅ Leképezett oszlopok:")
+                mapping_display = [
+                    {"CSV Oszlop": csv_col, "Unified Field": unified_col}
+                    for csv_col, unified_col in sorted(mapping.items())
+                ]
+                if mapping_display:
+                    st.dataframe(pd.DataFrame(mapping_display), use_container_width=True)
 
-            if unmapped:
-                st.markdown(f"#### ⚠️ Felismeretlen oszlopok ({len(unmapped)}):")
-                for col in unmapped[:5]:
-                    st.text(f"• {col}")
+                if unmapped:
+                    st.markdown(f"#### ⚠️ Felismeretlen oszlopok ({len(unmapped)}):")
+                    for col in unmapped[:5]:
+                        st.text(f"• {col}")
 
-            st.subheader("📋 Adatok Előnézete")
-            st.dataframe(raw_df.head(3), use_container_width=True)
+                st.subheader("📋 Adatok Előnézete")
+                st.dataframe(raw_df.head(3), use_container_width=True)
 
-            if st.button("✅ Normalizálás", type="primary"):
+                if st.button("✅ Normalizálás", type="primary"):
+                    pulse_container = render_pulsing_logo(logo_url)
+                    try:
+                        normalized_df = normalize_data(raw_df, mapping, st.session_state.platform)
+                        st.session_state.normalized_data = normalized_df
+                        st.success(f"✅ {len(normalized_df)} kampány sikeresen normalizálva!")
+                    except Exception as e:
+                        st.error(f"❌ Hiba: {str(e)}")
+                    finally:
+                        pulse_container.empty()
+
+            except Exception as e:
+                st.error(f"❌ Hiba: {str(e)}")
+
+    else:
+        st.info(
+            "ℹ️ Többlépcsős Facebook export esetén több fájlt tölts fel (pl. demográfia + geo). "
+            "A rendszer a fájlokat összevonja, de nem végez automatikus összefésülést, hogy elkerülje "
+            "a kampány-dátum alapon létrejövő duplikációkat."
+        )
+        uploaded_files = st.file_uploader(
+            "Válassz több CSV vagy Excel fájlt",
+            type=["csv", "xlsx", "xls"],
+            accept_multiple_files=True,
+            help="Facebook exportok (demográfia + geo)",
+        )
+
+        if uploaded_files:
+            normalized_dfs = []
+            st.subheader("2️⃣ Automata Oszlop Felismerés (több fájl)")
+
+            for idx, file in enumerate(uploaded_files, start=1):
                 try:
-                    normalized_df = normalize_data(raw_df, mapping, st.session_state.platform)
-                    st.session_state.normalized_data = normalized_df
-                    st.success(f"✅ {len(normalized_df)} kampány sikeresen normalizálva!")
+                    raw_df = load_uploaded_dataframe(file, clean_excel_structure)
+                    detected_platform = detect_platform(raw_df.columns)
+
+                    if detected_platform not in ["facebook", "unknown"]:
+                        st.warning(f"⚠️ {file.name}: nem Facebook exportnak tűnik.")
+
+                    mapping, unmapped = create_mapping_from_platform(raw_df.columns, "facebook")
+                    normalized_df = normalize_data(raw_df, mapping, "facebook")
+                    normalized_df = annotate_source_columns(normalized_df, file.name)
+                    normalized_dfs.append(normalized_df)
+
+                    with st.expander(f"📄 {idx}. fájl: {file.name}", expanded=idx == 1):
+                        st.info(f"📊 Sorok: {len(raw_df)}, Oszlopok: {len(raw_df.columns)}")
+                        mapping_display = [
+                            {"CSV Oszlop": csv_col, "Unified Field": unified_col}
+                            for csv_col, unified_col in sorted(mapping.items())
+                        ]
+                        if mapping_display:
+                            st.markdown("#### ✅ Leképezett oszlopok:")
+                            st.dataframe(pd.DataFrame(mapping_display), use_container_width=True)
+                        if unmapped:
+                            st.markdown(f"#### ⚠️ Felismeretlen oszlopok ({len(unmapped)}):")
+                            for col in unmapped[:5]:
+                                st.text(f"• {col}")
+                        st.markdown("#### 📋 Előnézet")
+                        st.dataframe(raw_df.head(3), use_container_width=True)
                 except Exception as e:
-                    st.error(f"❌ Hiba: {str(e)}")
+                    st.error(f"❌ {file.name} betöltési hiba: {str(e)}")
 
-            if st.session_state.normalized_data is not None:
-                st.subheader("📊 Normalizált Adatok")
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    if "spend" in st.session_state.normalized_data.columns:
-                        st.metric("💰 Költség", f"{st.session_state.normalized_data['spend'].sum():,.0f} HUF")
-                with col2:
-                    if "conversion_value" in st.session_state.normalized_data.columns:
-                        st.metric("💵 Érték", f"{st.session_state.normalized_data['conversion_value'].sum():,.0f} HUF")
-                with col3:
-                    if "roas" in st.session_state.normalized_data.columns and st.session_state.normalized_data["roas"].notna().any():
-                        st.metric("📈 ROAS", f"{st.session_state.normalized_data['roas'].mean():.2f}x")
+            if st.button("✅ Normalizálás (több fájl)", type="primary"):
+                pulse_container = render_pulsing_logo(logo_url)
+                if normalized_dfs:
+                    combined_df = pd.concat(normalized_dfs, ignore_index=True)
+                    st.session_state.normalized_data = combined_df
+                    st.success(f"✅ {len(combined_df)} sor sikeresen normalizálva (több fájl)!")
+                else:
+                    st.warning("⚠️ Nem sikerült feldolgozható fájlt találni.")
+                pulse_container.empty()
 
-                display_df = format_dataframe_for_display(st.session_state.normalized_data)
-                st.dataframe(display_df, use_container_width=True)
+    if st.session_state.normalized_data is not None:
+        st.subheader("📊 Normalizált Adatok")
 
-                col1, col2 = st.columns(2)
-                with col1:
-                    csv = st.session_state.normalized_data.to_csv(index=False)
-                    st.download_button("📥 CSV", csv, f"hyper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", "text/csv")
-                with col2:
-                    buffer = io.BytesIO()
-                    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                        st.session_state.normalized_data.to_excel(writer, index=False, sheet_name="Kampanyok")
-                    st.download_button("📥 Excel", buffer.getvalue(), f"hyper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx", 
-                                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        if "breakdown_type" in st.session_state.normalized_data.columns:
+            st.warning(
+                "⚠️ Többlépcsős export esetén az összesítések duplikációt tartalmazhatnak. "
+                "Használd a breakdown_type és source_file oszlopokat a szűréshez."
+            )
 
-        except Exception as e:
-            st.error(f"❌ Hiba: {str(e)}")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if "spend" in st.session_state.normalized_data.columns:
+                st.metric("💰 Költség", f"{st.session_state.normalized_data['spend'].sum():,.0f} HUF")
+        with col2:
+            if "conversion_value" in st.session_state.normalized_data.columns:
+                st.metric("💵 Érték", f"{st.session_state.normalized_data['conversion_value'].sum():,.0f} HUF")
+        with col3:
+            if "roas" in st.session_state.normalized_data.columns and st.session_state.normalized_data["roas"].notna().any():
+                st.metric("📈 ROAS", f"{st.session_state.normalized_data['roas'].mean():.2f}x")
 
-# ============================================================================
+        display_df = format_dataframe_for_display(st.session_state.normalized_data)
+        st.dataframe(display_df, use_container_width=True)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            csv = st.session_state.normalized_data.to_csv(index=False)
+            st.download_button("📥 CSV", csv, f"hyper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", "text/csv")
+        with col2:
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                st.session_state.normalized_data.to_excel(writer, index=False, sheet_name="Kampanyok")
+            st.download_button(
+                "📥 Excel",
+                buffer.getvalue(),
+                f"hyper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+# ---------------------------------------------------------------------------
 # TAB 2: FÁZIS 2 - HIRDETÉS ANALYZER (TELJES REIMPLEMENTÁCIÓ)
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 with tab2:
     st.markdown("### 🖼️ Fázis 2: Hirdetés Neuromarketing Analízis")
@@ -789,9 +886,9 @@ with tab2:
             
             st.table(comparison_df)
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # TAB 3: FÁZIS 3 - MODEL TRAINING
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 with tab3:
     st.markdown("### 🧠 Fázis 3: Model Training & Előrejelzés")
@@ -912,61 +1009,93 @@ with tab3:
         with col4:
             st.metric("💳 CPC", f"{cpc_manual:.0f} HUF")
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # TAB 4: DASHBOARD
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 with tab4:
     st.markdown("### 📊 Szintetikus Dashboard - Fázis 1-3 Összefoglaló")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.session_state.normalized_data is not None:
-            total_spend = st.session_state.normalized_data['spend'].sum()
-            st.metric("💰 Összes Költség", f"{total_spend:,.0f} HUF")
-    
-    with col2:
-        if st.session_state.scores_history:
-            st.metric("📊 Elemzett Hirdetések", len(st.session_state.scores_history))
-    
-    with col3:
-        if st.session_state.trained_model:
-            st.metric("✅ Modell Status", "🟢 Aktív")
-    
-    st.markdown("---")
-    
-    if st.session_state.normalized_data is not None:
-        rollups = build_rollups(st.session_state.normalized_data)
+    if st.session_state.normalized_data is None:
+        st.info("ℹ️ Nincs normalizált adat. Először tölts fel fájlokat a Tab1-ben.")
+    else:
+        df = st.session_state.normalized_data.copy()
+
+        filter_cols = st.columns(3)
+        with filter_cols[0]:
+            if "breakdown_type" in df.columns:
+                breakdown_options = sorted(df["breakdown_type"].dropna().unique().tolist())
+                breakdown_filter = st.multiselect(
+                    "Breakdown szűrés",
+                    breakdown_options,
+                    default=breakdown_options,
+                )
+            else:
+                breakdown_filter = []
+        with filter_cols[1]:
+            show_full_table = st.checkbox(
+                "Teljes tábla megjelenítése (lassú)",
+                value=False,
+                help="A teljes normalizált táblát rendereli, nagy adatmennyiségnél lassabb lehet.",
+            )
+        with filter_cols[2]:
+            rollup_enabled = st.checkbox(
+                "Rollupok számítása (lassabb)",
+                value=False,
+                help=(
+                    "Összesített pivot táblákat számít (havi/regionális/heti/dimenzió), "
+                    "nagy adatmennyiségnél lassabb lehet."
+                ),
+            )
+
+        if breakdown_filter:
+            df = df[df["breakdown_type"].isin(breakdown_filter)]
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if "spend" in df.columns:
+                total_spend = df['spend'].sum()
+                st.metric("💰 Összes Költség", f"{total_spend:,.0f} HUF")
+        with col2:
+            if st.session_state.scores_history:
+                st.metric("📊 Elemzett Hirdetések", len(st.session_state.scores_history))
+        with col3:
+            if st.session_state.trained_model:
+                st.metric("✅ Modell Status", "🟢 Aktív")
+
+        st.markdown("---")
+
         st.subheader("📈 Kampányok Összesítése")
-        
-        summary = st.session_state.normalized_data.groupby('platform').agg({
-            'spend': 'sum',
-            'conversions': 'sum',
-            'conversion_value': 'sum',
-            'impressions': 'sum',
-        }).round(2)
-        
+        summary = build_dashboard_summary(df)
         st.dataframe(summary, use_container_width=True)
 
-        with st.expander("📊 Rollup pivotok (havi / regionális / időszaki)"):
-            if rollups.get("monthly") is not None:
-                st.markdown("**Havi bontás**")
-                st.dataframe(rollups["monthly"], use_container_width=True)
-            if rollups.get("regional") is not None:
-                st.markdown("**Regionális bontás (város)**")
-                st.dataframe(rollups["regional"], use_container_width=True)
-            if rollups.get("weekly") is not None:
-                st.markdown("**Heti bontás**")
-                st.dataframe(rollups["weekly"], use_container_width=True)
-            if rollups.get("segment_pivot") is not None:
-                st.markdown("**Dimenzió pivot**")
-                st.dataframe(rollups["segment_pivot"], use_container_width=True)
+        st.subheader("📋 Mintavétel (gyors nézet)")
+        st.dataframe(df.head(200), use_container_width=True)
+
+        if show_full_table:
+            st.subheader("📎 Teljes tábla (nagy adatmennyiség)")
+            st.dataframe(df, use_container_width=True)
+
+        if rollup_enabled:
+            with st.spinner("Rollupok számítása..."):
+                rollups = cached_rollups(df)
+            with st.expander("📊 Rollup pivotok (havi / regionális / időszaki)"):
+                if rollups.get("monthly") is not None:
+                    st.markdown("**Havi bontás**")
+                    st.dataframe(rollups["monthly"], use_container_width=True)
+                if rollups.get("regional") is not None:
+                    st.markdown("**Regionális bontás (város/megye)**")
+                    st.dataframe(rollups["regional"], use_container_width=True)
+                if rollups.get("weekly") is not None:
+                    st.markdown("**Heti bontás**")
+                    st.dataframe(rollups["weekly"], use_container_width=True)
+                if rollups.get("segment_pivot") is not None:
+                    st.markdown("**Dimenzió pivot**")
+                    st.dataframe(rollups["segment_pivot"], use_container_width=True)
 
         st.markdown("---")
         st.subheader("📊 Trendek")
 
-        trends_df = st.session_state.normalized_data.copy()
+        trends_df = df.copy()
         if "date_start" in trends_df.columns:
             trends_df["date_start"] = pd.to_datetime(trends_df["date_start"], errors="coerce")
             trends_df["month_period"] = trends_df["date_start"].dt.to_period("M").astype(str)
@@ -1005,18 +1134,45 @@ with tab4:
             )
             return ["Összes"] + sorted(values)
 
-        month_options = ["Összes"] + trends_df[["month_label", "month_period"]].dropna().drop_duplicates().sort_values("month_period")["month_label"].tolist()
-        geo_options = build_options("geo_city")
+        if "geo_region" in trends_df.columns and "geo_city" in trends_df.columns:
+            trends_df["geo_location"] = trends_df["geo_region"].fillna(trends_df["geo_city"])
+        elif "geo_region" in trends_df.columns:
+            trends_df["geo_location"] = trends_df["geo_region"]
+        elif "geo_city" in trends_df.columns:
+            trends_df["geo_location"] = trends_df["geo_city"]
+        geo_label = "Lokáció (megye/város)"
+        geo_options = build_options("geo_location")
         age_options = build_options("age_group")
         gender_options = build_options("gender")
         device_options = build_options("device")
         placement_options = build_options("placement")
 
+        min_date = None
+        max_date = None
+        if "date_start" in trends_df.columns and trends_df["date_start"].notna().any():
+            date_series = pd.to_datetime(trends_df["date_start"], errors="coerce")
+            min_date = date_series.min().date()
+            max_date = date_series.max().date()
+        date_picker_available = min_date is not None and max_date is not None
+
         col_a, col_b = st.columns(2)
         with col_a:
             st.markdown("**🔹 Szegmens A**")
-            month_a = st.selectbox("Hónap", month_options, key="trend_month_a")
-            geo_a = st.selectbox("Város", geo_options, key="trend_geo_a")
+            if date_picker_available:
+                all_month_a = st.checkbox("Összes hónap", value=True, key="trend_month_all_a")
+                month_a = st.date_input(
+                    "Hónap",
+                    value=min_date,
+                    min_value=min_date,
+                    max_value=max_date,
+                    disabled=all_month_a,
+                    key="trend_month_a",
+                )
+            else:
+                all_month_a = True
+                month_a = None
+                st.caption("Nincs dátum mező, ezért a hónap szűrés nem elérhető.")
+            geo_a = st.selectbox(geo_label, geo_options, key="trend_geo_a")
             age_a = st.selectbox("Korcsoport", age_options, key="trend_age_a")
             gender_a = st.selectbox("Nem", gender_options, key="trend_gender_a")
             device_a = st.selectbox("Eszköz", device_options, key="trend_device_a")
@@ -1024,23 +1180,40 @@ with tab4:
 
         with col_b:
             st.markdown("**🔸 Szegmens B**")
-            month_b = st.selectbox("Hónap", month_options, key="trend_month_b", index=min(1, len(month_options) - 1))
-            geo_b = st.selectbox("Város", geo_options, key="trend_geo_b")
+            if date_picker_available:
+                all_month_b = st.checkbox("Összes hónap", value=True, key="trend_month_all_b")
+                month_b = st.date_input(
+                    "Hónap",
+                    value=min_date,
+                    min_value=min_date,
+                    max_value=max_date,
+                    disabled=all_month_b,
+                    key="trend_month_b",
+                )
+            else:
+                all_month_b = True
+                month_b = None
+                st.caption("Nincs dátum mező, ezért a hónap szűrés nem elérhető.")
+            geo_b = st.selectbox(geo_label, geo_options, key="trend_geo_b")
             age_b = st.selectbox("Korcsoport", age_options, key="trend_age_b")
             gender_b = st.selectbox("Nem", gender_options, key="trend_gender_b")
             device_b = st.selectbox("Eszköz", device_options, key="trend_device_b")
             placement_b = st.selectbox("Elhelyezés", placement_options, key="trend_placement_b")
 
-        def apply_month_filter(df, month_value):
-            if month_value == "Összes":
+        def apply_month_filter(df, month_value, include_all):
+            if include_all or "date_start" not in df.columns or pd.isna(month_value):
                 return df
-            return df[df["month_label"] == month_value]
+            month_value = pd.to_datetime(month_value)
+            return df[
+                (df["date_start"].dt.month == month_value.month)
+                & (df["date_start"].dt.year == month_value.year)
+            ]
 
-        segment_a = apply_month_filter(trends_df, month_a)
+        segment_a = apply_month_filter(trends_df, month_a, all_month_a)
         segment_a = filter_segment(
             segment_a,
             {
-                "geo_city": geo_a,
+                "geo_location": geo_a,
                 "age_group": age_a,
                 "gender": gender_a,
                 "device": device_a,
@@ -1048,11 +1221,11 @@ with tab4:
             },
         )
 
-        segment_b = apply_month_filter(trends_df, month_b)
+        segment_b = apply_month_filter(trends_df, month_b, all_month_b)
         segment_b = filter_segment(
             segment_b,
             {
-                "geo_city": geo_b,
+                "geo_location": geo_b,
                 "age_group": age_b,
                 "gender": gender_b,
                 "device": device_b,
@@ -1100,7 +1273,77 @@ with tab4:
             else:
                 st.info("Nincs elég adat a trend charthoz.")
 
-        st.info("🧪 Következő lépés: Prophet / SARIMAX forecasting réteg a szezonális trendek előrejelzésére.")
+        with st.expander("🔮 Forecasting (baseline / SARIMAX)", expanded=False):
+            st.markdown("Válassz előrejelzési módszert a szezonális trendekhez.")
+            forecast_method = st.selectbox(
+                "Módszer",
+                ["Baseline (utolsó 3 hónap átlaga)", "SARIMAX (szezonális)"],
+                key="forecast_method",
+            )
+            forecast_horizon = st.slider("Előrejelzés hónapok száma", 1, 6, 3, key="forecast_horizon")
+            target_segment = st.selectbox("Szegmens", ["Szegmens A", "Szegmens B", "Mindkettő"], key="forecast_segment")
+
+            def build_baseline(series):
+                if series.empty:
+                    return None
+                series = series.copy()
+                series.index = pd.PeriodIndex(series.index, freq="M")
+                recent = series.tail(3)
+                baseline = recent.mean() if not recent.empty else series.mean()
+                future_periods = pd.period_range(start=series.index.max() + 1, periods=forecast_horizon, freq="M")
+                forecast = pd.Series([baseline] * forecast_horizon, index=future_periods)
+                combined = pd.DataFrame({
+                    "Tény": series.astype(float),
+                    "Előrejelzés": forecast.astype(float),
+                })
+                combined.index = combined.index.astype(str)
+                return combined
+
+            def build_sarimax(series):
+                if series.empty:
+                    return None
+                series = series.copy()
+                series.index = pd.PeriodIndex(series.index, freq="M")
+                values = series.astype(float)
+                if len(values) < 6:
+                    return None
+                seasonal_order = (1, 1, 1, 12) if len(values) >= 24 else (0, 0, 0, 0)
+                model = SARIMAX(
+                    values,
+                    order=(1, 1, 1),
+                    seasonal_order=seasonal_order,
+                    enforce_stationarity=False,
+                    enforce_invertibility=False,
+                )
+                result = model.fit(disp=False)
+                forecast = result.forecast(steps=forecast_horizon)
+                future_periods = pd.period_range(start=values.index.max() + 1, periods=forecast_horizon, freq="M")
+                forecast.index = future_periods
+                combined = pd.DataFrame({
+                    "Tény": values,
+                    "Előrejelzés": forecast,
+                })
+                combined.index = combined.index.astype(str)
+                return combined
+
+            def build_forecast(series):
+                if forecast_method.startswith("Baseline"):
+                    return build_baseline(series)
+                return build_sarimax(series)
+
+            def render_forecast(series, label):
+                forecast = build_forecast(series)
+                if forecast is None:
+                    st.info(f"{label}: nincs elég adat előrejelzéshez.")
+                    return
+                st.markdown(f"**{label} előrejelzés**")
+                st.line_chart(forecast)
+
+            if target_segment in ["Szegmens A", "Mindkettő"]:
+                render_forecast(series_a, "Szegmens A")
+
+            if target_segment in ["Szegmens B", "Mindkettő"]:
+                render_forecast(series_b, "Szegmens B")
     
     if st.session_state.scores_history:
         st.subheader("🖼️ Hirdetések Scoring Historia")
@@ -1135,6 +1378,7 @@ with st.expander("ℹ️ Hogyan működik a modell?"):
     """)
 
 st.markdown(
-    "<p style='text-align: center; font-size: 12px;'><strong>HYPER App v9.2</strong> | Fázis 1-3 Integráció<br>✅ CSV Import • 🖼️ Hirdetés Analyzer • 🧠 Model Training • 📊 Dashboard</p>",
-    unsafe_allow_html=True
+    f"<p style='text-align: center; font-size: 12px;'><strong>HYPER App v{APP_VERSION}</strong> | "
+    "Fázis 1-3 Integráció<br>✅ CSV Import • 🖼️ Hirdetés Analyzer • 🧠 Model Training • 📊 Dashboard</p>",
+    unsafe_allow_html=True,
 )

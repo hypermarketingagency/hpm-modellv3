@@ -1029,9 +1029,26 @@ with tab4:
             else:
                 breakdown_filter = []
         with filter_cols[1]:
+ codex/review-current-app-functionality-and-plan-development-1im5ro
+            show_full_table = st.checkbox(
+                "Teljes tábla megjelenítése (lassú)",
+                value=False,
+                help="A teljes normalizált táblát rendereli, nagy adatmennyiségnél lassabb lehet.",
+            )
+        with filter_cols[2]:
+            rollup_enabled = st.checkbox(
+                "Rollupok számítása (lassabb)",
+                value=False,
+                help=(
+                    "Összesített pivot táblákat számít (havi/regionális/heti/dimenzió), "
+                    "nagy adatmennyiségnél lassabb lehet."
+                ),
+            )
+
             show_full_table = st.checkbox("Teljes tábla megjelenítése (lassú)", value=False)
         with filter_cols[2]:
             rollup_enabled = st.checkbox("Rollupok számítása (lassabb)", value=False)
+ main
 
         if breakdown_filter:
             df = df[df["breakdown_type"].isin(breakdown_filter)]
@@ -1254,7 +1271,45 @@ with tab4:
             else:
                 st.info("Nincs elég adat a trend charthoz.")
 
-        st.info("🧪 Következő lépés: Prophet / SARIMAX forecasting réteg a szezonális trendek előrejelzésére.")
+        with st.expander("🔮 Forecasting (baseline, Prophet/SARIMAX előkészítés)", expanded=False):
+            st.markdown(
+                "Egyszerű baseline előrejelzés (utolsó 3 hónap átlaga), "
+                "amíg a Prophet/SARIMAX réteg érkezik."
+            )
+            forecast_horizon = st.slider("Előrejelzés hónapok száma", 1, 6, 3, key="forecast_horizon")
+            target_segment = st.selectbox("Szegmens", ["Szegmens A", "Szegmens B", "Mindkettő"], key="forecast_segment")
+
+            def build_forecast(series):
+                if series.empty:
+                    return None
+                series = series.copy()
+                series.index = pd.PeriodIndex(series.index, freq="M")
+                recent = series.tail(3)
+                baseline = recent.mean() if not recent.empty else series.mean()
+                future_periods = pd.period_range(start=series.index.max() + 1, periods=forecast_horizon, freq="M")
+                forecast = pd.Series([baseline] * forecast_horizon, index=future_periods)
+                combined = pd.DataFrame({
+                    "Tény": series.astype(float),
+                    "Előrejelzés": forecast.astype(float),
+                })
+                combined.index = combined.index.astype(str)
+                return combined
+
+            if target_segment in ["Szegmens A", "Mindkettő"]:
+                forecast_a = build_forecast(series_a)
+                if forecast_a is not None:
+                    st.markdown("**Szegmens A előrejelzés**")
+                    st.line_chart(forecast_a)
+                else:
+                    st.info("Szegmens A: nincs elég adat előrejelzéshez.")
+
+            if target_segment in ["Szegmens B", "Mindkettő"]:
+                forecast_b = build_forecast(series_b)
+                if forecast_b is not None:
+                    st.markdown("**Szegmens B előrejelzés**")
+                    st.line_chart(forecast_b)
+                else:
+                    st.info("Szegmens B: nincs elég adat előrejelzéshez.")
     
     if st.session_state.scores_history:
         st.subheader("🖼️ Hirdetések Scoring Historia")
@@ -1289,6 +1344,6 @@ with st.expander("ℹ️ Hogyan működik a modell?"):
     """)
 
 st.markdown(
-    "<p style='text-align: center; font-size: 12px;'><strong>HYPER App v9.2</strong> | Fázis 1-3 Integráció<br>✅ CSV Import • 🖼️ Hirdetés Analyzer • 🧠 Model Training • 📊 Dashboard</p>",
+    "<p style='text-align: center; font-size: 12px;'><strong>HYPER App v9.2.5</strong> | Fázis 1-3 Integráció<br>✅ CSV Import • 🖼️ Hirdetés Analyzer • 🧠 Model Training • 📊 Dashboard</p>",
     unsafe_allow_html=True
 )

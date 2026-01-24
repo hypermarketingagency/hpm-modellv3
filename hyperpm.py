@@ -6,6 +6,7 @@ import io
 from PIL import Image
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score
+from statsmodels.tsa.statespace.sarimax import SARIMAX
 from analytics.rollups import filter_segment, segment_summary
 from analytics.import_helpers import (
     annotate_source_columns,
@@ -28,6 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+APP_VERSION = "9.2.6"
 logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
 
 # Header with Logo
@@ -1265,15 +1267,17 @@ with tab4:
             else:
                 st.info("Nincs elég adat a trend charthoz.")
 
-        with st.expander("🔮 Forecasting (baseline, Prophet/SARIMAX előkészítés)", expanded=False):
-            st.markdown(
-                "Egyszerű baseline előrejelzés (utolsó 3 hónap átlaga), "
-                "amíg a Prophet/SARIMAX réteg érkezik."
+        with st.expander("🔮 Forecasting (baseline / SARIMAX)", expanded=False):
+            st.markdown("Válassz előrejelzési módszert a szezonális trendekhez.")
+            forecast_method = st.selectbox(
+                "Módszer",
+                ["Baseline (utolsó 3 hónap átlaga)", "SARIMAX (szezonális)"],
+                key="forecast_method",
             )
             forecast_horizon = st.slider("Előrejelzés hónapok száma", 1, 6, 3, key="forecast_horizon")
             target_segment = st.selectbox("Szegmens", ["Szegmens A", "Szegmens B", "Mindkettő"], key="forecast_segment")
 
-            def build_forecast(series):
+            def build_baseline(series):
                 if series.empty:
                     return None
                 series = series.copy()
@@ -1289,21 +1293,51 @@ with tab4:
                 combined.index = combined.index.astype(str)
                 return combined
 
+            def build_sarimax(series):
+                if series.empty:
+                    return None
+                series = series.copy()
+                series.index = pd.PeriodIndex(series.index, freq="M")
+                values = series.astype(float)
+                if len(values) < 6:
+                    return None
+                seasonal_order = (1, 1, 1, 12) if len(values) >= 24 else (0, 0, 0, 0)
+                model = SARIMAX(
+                    values,
+                    order=(1, 1, 1),
+                    seasonal_order=seasonal_order,
+                    enforce_stationarity=False,
+                    enforce_invertibility=False,
+                )
+                result = model.fit(disp=False)
+                forecast = result.forecast(steps=forecast_horizon)
+                future_periods = pd.period_range(start=values.index.max() + 1, periods=forecast_horizon, freq="M")
+                forecast.index = future_periods
+                combined = pd.DataFrame({
+                    "Tény": values,
+                    "Előrejelzés": forecast,
+                })
+                combined.index = combined.index.astype(str)
+                return combined
+
+            def build_forecast(series):
+                if forecast_method.startswith("Baseline"):
+                    return build_baseline(series)
+                return build_sarimax(series)
+
+            def render_forecast(series, label):
+                forecast = build_forecast(series)
+                if forecast is None:
+                    st.info(f"{label}: nincs elég adat előrejelzéshez.")
+                    return
+                st.markdown(f"**{label} előrejelzés**")
+                st.line_chart(forecast)
+
             if target_segment in ["Szegmens A", "Mindkettő"]:
-                forecast_a = build_forecast(series_a)
-                if forecast_a is not None:
-                    st.markdown("**Szegmens A előrejelzés**")
-                    st.line_chart(forecast_a)
-                else:
-                    st.info("Szegmens A: nincs elég adat előrejelzéshez.")
+                render_forecast(series_a, "Szegmens A")
 
             if target_segment in ["Szegmens B", "Mindkettő"]:
-                forecast_b = build_forecast(series_b)
-                if forecast_b is not None:
-                    st.markdown("**Szegmens B előrejelzés**")
-                    st.line_chart(forecast_b)
-                else:
-                    st.info("Szegmens B: nincs elég adat előrejelzéshez.")
+                render_forecast(series_b, "Szegmens B")
     
     if st.session_state.scores_history:
         st.subheader("🖼️ Hirdetések Scoring Historia")
@@ -1338,6 +1372,7 @@ with st.expander("ℹ️ Hogyan működik a modell?"):
     """)
 
 st.markdown(
-    "<p style='text-align: center; font-size: 12px;'><strong>HYPER App v9.2.5</strong> | Fázis 1-3 Integráció<br>✅ CSV Import • 🖼️ Hirdetés Analyzer • 🧠 Model Training • 📊 Dashboard</p>",
-    unsafe_allow_html=True
+    f"<p style='text-align: center; font-size: 12px;'><strong>HYPER App v{APP_VERSION}</strong> | "
+    "Fázis 1-3 Integráció<br>✅ CSV Import • 🖼️ Hirdetés Analyzer • 🧠 Model Training • 📊 Dashboard</p>",
+    unsafe_allow_html=True,
 )

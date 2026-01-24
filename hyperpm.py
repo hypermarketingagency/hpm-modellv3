@@ -29,7 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_VERSION = "9.2.6"
+APP_VERSION = "9.2.7"
 logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
 
 # Header with Logo
@@ -73,6 +73,7 @@ FACEBOOK_EXACT_MAPPING = {
     "Nem": "gender",
     "Város": "geo_city",
     "Régió": "geo_region",
+    "Region": "geo_region",
     "Megye": "geo_region",
     "Eszköz": "device",
     "Elhelyezés": "placement",
@@ -1133,9 +1134,14 @@ with tab4:
             )
             return ["Összes"] + sorted(values)
 
-        geo_column = "geo_region" if "geo_region" in trends_df.columns else "geo_city"
-        geo_label = "Régió/Megye" if geo_column == "geo_region" else "Város"
-        geo_options = build_options(geo_column)
+        if "geo_region" in trends_df.columns and "geo_city" in trends_df.columns:
+            trends_df["geo_location"] = trends_df["geo_region"].fillna(trends_df["geo_city"])
+        elif "geo_region" in trends_df.columns:
+            trends_df["geo_location"] = trends_df["geo_region"]
+        elif "geo_city" in trends_df.columns:
+            trends_df["geo_location"] = trends_df["geo_city"]
+        geo_label = "Lokáció (megye/város)"
+        geo_options = build_options("geo_location")
         age_options = build_options("age_group")
         gender_options = build_options("gender")
         device_options = build_options("device")
@@ -1207,7 +1213,7 @@ with tab4:
         segment_a = filter_segment(
             segment_a,
             {
-                geo_column: geo_a,
+                "geo_location": geo_a,
                 "age_group": age_a,
                 "gender": gender_a,
                 "device": device_a,
@@ -1219,7 +1225,7 @@ with tab4:
         segment_b = filter_segment(
             segment_b,
             {
-                geo_column: geo_b,
+                "geo_location": geo_b,
                 "age_group": age_b,
                 "gender": gender_b,
                 "device": device_b,

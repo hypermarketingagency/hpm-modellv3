@@ -29,7 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_VERSION = "9.2.8"
+APP_VERSION = "9.2.9"
 logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
 
 # Header with Logo
@@ -358,6 +358,30 @@ def format_dataframe_for_display(df):
             display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "–")
     return display_df
 
+def build_deduped_metrics_df(df):
+    metric_columns = [
+        "spend",
+        "conversion_value",
+        "conversions",
+        "impressions",
+        "clicks",
+        "reach",
+    ]
+    base_keys = [
+        "date_start",
+        "platform",
+        "campaign_name",
+        "adset_name",
+        "ad_name",
+    ]
+    available_keys = [key for key in base_keys if key in df.columns]
+    if not available_keys:
+        return df
+    agg_map = {col: "max" for col in metric_columns if col in df.columns}
+    if not agg_map:
+        return df
+    return df.groupby(available_keys, dropna=False).agg(agg_map).reset_index()
+
 
 # ---------------------------------------------------------------------------
 # 🧠 NEUROMARKETING FUNCTIONS (Fázis 2)
@@ -628,13 +652,15 @@ with tab1:
                 "Használd a breakdown_type és source_file oszlopokat a szűréshez."
             )
 
+        metrics_df = build_deduped_metrics_df(st.session_state.normalized_data)
+
         col1, col2, col3 = st.columns(3)
         with col1:
-            if "spend" in st.session_state.normalized_data.columns:
-                st.metric("💰 Költség", f"{st.session_state.normalized_data['spend'].sum():,.0f} HUF")
+            if "spend" in metrics_df.columns:
+                st.metric("💰 Költség", f"{metrics_df['spend'].sum():,.0f} HUF")
         with col2:
-            if "conversion_value" in st.session_state.normalized_data.columns:
-                st.metric("💵 Érték", f"{st.session_state.normalized_data['conversion_value'].sum():,.0f} HUF")
+            if "conversion_value" in metrics_df.columns:
+                st.metric("💵 Érték", f"{metrics_df['conversion_value'].sum():,.0f} HUF")
         with col3:
             if "roas" in st.session_state.normalized_data.columns and st.session_state.normalized_data["roas"].notna().any():
                 st.metric("📈 ROAS", f"{st.session_state.normalized_data['roas'].mean():.2f}x")
@@ -1050,19 +1076,7 @@ with tab4:
         if breakdown_filter:
             df = df[df["breakdown_type"].isin(breakdown_filter)]
 
-        metrics_df = df
-        if "breakdown_type" in df.columns and breakdown_options:
-            metrics_source = st.selectbox(
-                "Összesítés forrása",
-                ["Összes (duplikálhat)"] + breakdown_options,
-                help=(
-                    "Több fájlos importnál a breakdownok duplikálhatják az összegeket. "
-                    "Válassz egy forrást (pl. demography vagy geo) a pontos összesítéshez."
-                ),
-                key="metrics_source",
-            )
-            if metrics_source != "Összes (duplikálhat)":
-                metrics_df = df[df["breakdown_type"] == metrics_source]
+        metrics_df = build_deduped_metrics_df(df)
 
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -1109,7 +1123,7 @@ with tab4:
         st.markdown("---")
         st.subheader("📊 Trendek")
 
-        trends_df = metrics_df.copy()
+        trends_df = df.copy()
         if "date_start" in trends_df.columns:
             trends_df["date_start"] = pd.to_datetime(trends_df["date_start"], errors="coerce")
             trends_df["month_period"] = trends_df["date_start"].dt.to_period("M").astype(str)

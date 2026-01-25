@@ -1016,9 +1016,23 @@ with tab3:
     st.sidebar.subheader("📈 Model Teljesítmény")
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        st.metric("R² Score", f"{r2:.3f}")
+        st.metric(
+            "R² Score",
+            f"{r2:.3f}",
+            help=(
+                "R² (determinációs együttható) mutatja, hogy a modell mennyire magyarázza "
+                "a ROAS szórását. 1.0 = tökéletes illeszkedés."
+            ),
+        )
     with col2:
-        st.metric("RMSE", f"{rmse:.3f}")
+        st.metric(
+            "RMSE",
+            f"{rmse:.3f}",
+            help=(
+                "RMSE (Root Mean Squared Error) az előrejelzési hiba nagyságát mutatja. "
+                "Minél alacsonyabb, annál jobb."
+            ),
+        )
     
     st.markdown("---")
     st.subheader("🎯 Manuális ROAS Előrejelzés")
@@ -1526,6 +1540,12 @@ with st.expander("ℹ️ Hogyan működik a modell?"):
     - **Budget**: Költségvetés - Nagyobb adspend = több impresszió
     - **CPC**: Kattintás ára - Platform határozza meg
     - **CTR**: Kattintási arány - Jó ad = 2-5% CTR
+
+    ### SARIMAX előrejelzés
+
+    - **SARIMAX**: szezonális idősoros modell, amely a trendeket és ciklikus mintákat tanulja.
+    - **Mikor hasznos?**: ha legalább 24+ hónap adat áll rendelkezésre, stabilabb szezonalitást ad.
+    - **Mire figyelj?**: rövidebb idősor esetén a baseline átlag gyakran megbízhatóbb.
     """)
 
 st.markdown(

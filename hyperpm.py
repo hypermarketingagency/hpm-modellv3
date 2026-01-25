@@ -29,7 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_VERSION = "9.2.11"
+APP_VERSION = "9.2.12"
 logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
 
 # Header with Logo
@@ -391,6 +391,40 @@ def build_deduped_metrics_df(df):
         return per_breakdown.groupby(available_keys, dropna=False).agg(metric_max).reset_index()
     return df.groupby(available_keys, dropna=False).agg(agg_map).reset_index()
 
+@st.cache_data(show_spinner=False)
+def build_segment_metrics_df(df, segment_columns):
+    metric_columns = [
+        "spend",
+        "conversion_value",
+        "conversions",
+        "impressions",
+        "clicks",
+        "reach",
+    ]
+    base_keys = [
+        "date_start",
+        "platform",
+        "campaign_name",
+        "adset_name",
+        "ad_name",
+    ]
+    keys = base_keys + [col for col in segment_columns if col in df.columns]
+    available_keys = [key for key in keys if key in df.columns]
+    if not available_keys:
+        return df
+    agg_map = {col: "sum" for col in metric_columns if col in df.columns}
+    if not agg_map:
+        return df
+    if "breakdown_type" in df.columns:
+        per_breakdown = (
+            df.groupby(available_keys + ["breakdown_type"], dropna=False)
+            .agg(agg_map)
+            .reset_index()
+        )
+        metric_max = {col: "max" for col in agg_map}
+        return per_breakdown.groupby(available_keys, dropna=False).agg(metric_max).reset_index()
+    return df.groupby(available_keys, dropna=False).agg(agg_map).reset_index()
+
 
 # ---------------------------------------------------------------------------
 # 🧠 NEUROMARKETING FUNCTIONS (Fázis 2)
@@ -527,7 +561,12 @@ with tab1:
     st.subheader("1️⃣ CSV/Excel Feltöltés")
     import_mode = st.radio(
         "Import mód",
-        ["Egylépcsős feltöltés", "Többlépcsős Facebook (demó + geo)"],
+        [
+            "Egylépcsős feltöltés",
+            "Többlépcsős Facebook (demó + geo)",
+            "Többlépcsős Google Ads",
+            "Többlépcsős TikTok Ads",
+        ],
         horizontal=True,
     )
 
@@ -595,8 +634,15 @@ with tab1:
                 st.error(f"❌ Hiba: {str(e)}")
 
     else:
+        multi_platform_map = {
+            "Többlépcsős Facebook (demó + geo)": ("facebook", "Facebook"),
+            "Többlépcsős Google Ads": ("google_ads", "Google Ads"),
+            "Többlépcsős TikTok Ads": ("tiktok", "TikTok"),
+        }
+        platform_key, platform_label = multi_platform_map.get(import_mode, ("facebook", "Facebook"))
+
         st.info(
-            "ℹ️ Többlépcsős Facebook export esetén több fájlt tölts fel (pl. demográfia + geo). "
+            f"ℹ️ Többlépcsős {platform_label} export esetén több fájlt tölts fel. "
             "A rendszer a fájlokat összevonja, de nem végez automatikus összefésülést, hogy elkerülje "
             "a kampány-dátum alapon létrejövő duplikációkat."
         )
@@ -604,7 +650,7 @@ with tab1:
             "Válassz több CSV vagy Excel fájlt",
             type=["csv", "xlsx", "xls"],
             accept_multiple_files=True,
-            help="Facebook exportok (demográfia + geo)",
+            help=f"{platform_label} exportok (többlépcsős)",
         )
 
         if uploaded_files:
@@ -616,11 +662,11 @@ with tab1:
                     raw_df = load_uploaded_dataframe(file, clean_excel_structure)
                     detected_platform = detect_platform(raw_df.columns)
 
-                    if detected_platform not in ["facebook", "unknown"]:
-                        st.warning(f"⚠️ {file.name}: nem Facebook exportnak tűnik.")
+                    if detected_platform not in [platform_key, "unknown"]:
+                        st.warning(f"⚠️ {file.name}: nem {platform_label} exportnak tűnik.")
 
-                    mapping, unmapped = create_mapping_from_platform(raw_df.columns, "facebook")
-                    normalized_df = normalize_data(raw_df, mapping, "facebook")
+                    mapping, unmapped = create_mapping_from_platform(raw_df.columns, platform_key)
+                    normalized_df = normalize_data(raw_df, mapping, platform_key)
                     normalized_df = annotate_source_columns(normalized_df, file.name)
                     normalized_dfs.append(normalized_df)
 
@@ -1054,10 +1100,9 @@ with tab4:
         st.info("ℹ️ Nincs normalizált adat. Először tölts fel fájlokat a Tab1-ben.")
     else:
         full_df = st.session_state.normalized_data.copy()
-        metrics_df = build_deduped_metrics_df(full_df)
         df = full_df.copy()
 
-        filter_cols = st.columns(3)
+        filter_cols = st.columns(4)
         with filter_cols[0]:
             if "breakdown_type" in df.columns:
                 breakdown_options = sorted(df["breakdown_type"].dropna().unique().tolist())
@@ -1069,12 +1114,19 @@ with tab4:
             else:
                 breakdown_filter = []
         with filter_cols[1]:
+            fast_mode = st.checkbox(
+                "Gyors mód (kevesebb UI számítás)",
+                value=False,
+                help="Kikapcsolja a trend chartokat és forecastingot a gyorsabb rendereléshez.",
+            )
+        with filter_cols[2]:
             show_full_table = st.checkbox(
                 "Teljes tábla megjelenítése (lassú)",
                 value=False,
                 help="A teljes normalizált táblát rendereli, nagy adatmennyiségnél lassabb lehet.",
+                disabled=fast_mode,
             )
-        with filter_cols[2]:
+        with filter_cols[3]:
             rollup_enabled = st.checkbox(
                 "Rollupok számítása (lassabb)",
                 value=False,
@@ -1086,6 +1138,49 @@ with tab4:
 
         if breakdown_filter:
             df = df[df["breakdown_type"].isin(breakdown_filter)]
+
+        if "date_start" in df.columns:
+            date_col = pd.to_datetime(df["date_start"], errors="coerce")
+            min_date = date_col.min().date() if date_col.notna().any() else None
+            max_date = date_col.max().date() if date_col.notna().any() else None
+        else:
+            min_date = None
+            max_date = None
+        date_picker_available = min_date is not None and max_date is not None
+        with st.expander("🗓️ Dátumtartomány szűrés", expanded=False):
+            if date_picker_available:
+                use_full_range = st.checkbox("Teljes időszak", value=True, key="dashboard_all_dates")
+                date_range = st.date_input(
+                    "Dátumtartomány",
+                    value=(min_date, max_date),
+                    min_value=min_date,
+                    max_value=max_date,
+                    disabled=use_full_range,
+                    key="dashboard_date_range",
+                )
+            else:
+                use_full_range = True
+                date_range = (None, None)
+                st.caption("Nincs dátum mező, ezért a szűrés nem elérhető.")
+
+        def apply_date_range(df, date_range_value, include_all):
+            if include_all or "date_start" not in df.columns:
+                return df
+            if isinstance(date_range_value, (list, tuple)):
+                start_date, end_date = date_range_value
+            else:
+                start_date = date_range_value
+                end_date = date_range_value
+            if start_date is None or end_date is None:
+                return df
+            date_series = pd.to_datetime(df["date_start"], errors="coerce")
+            start_dt = pd.to_datetime(start_date)
+            end_dt = pd.to_datetime(end_date)
+            mask = (date_series >= start_dt) & (date_series <= end_dt)
+            return df.loc[mask].copy()
+
+        df = apply_date_range(df, date_range, use_full_range)
+        metrics_df = build_deduped_metrics_df(df)
 
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -1106,7 +1201,8 @@ with tab4:
         st.dataframe(summary, use_container_width=True)
 
         st.subheader("📋 Mintavétel (gyors nézet)")
-        st.dataframe(metrics_df.head(200), use_container_width=True)
+        preview_limit = 50 if fast_mode else 200
+        st.dataframe(metrics_df.head(preview_limit), use_container_width=True)
 
         if show_full_table:
             st.subheader("📎 Teljes tábla (nagy adatmennyiség)")
@@ -1135,27 +1231,11 @@ with tab4:
         trends_df = df.copy()
         if "date_start" in trends_df.columns:
             trends_df["date_start"] = pd.to_datetime(trends_df["date_start"], errors="coerce")
-            trends_df["month_period"] = trends_df["date_start"].dt.to_period("M").astype(str)
-            month_labels = {
-                1: "Január",
-                2: "Február",
-                3: "Március",
-                4: "Április",
-                5: "Május",
-                6: "Június",
-                7: "Július",
-                8: "Augusztus",
-                9: "Szeptember",
-                10: "Október",
-                11: "November",
-                12: "December",
-            }
-            trends_df["month_label"] = trends_df["date_start"].apply(
-                lambda x: f"{month_labels.get(x.month, x.month)} {x.year}" if pd.notna(x) else "Ismeretlen"
-            )
-        else:
-            trends_df["month_label"] = "Ismeretlen"
-            trends_df["month_period"] = "Ismeretlen"
+        trends_df["month_period"] = (
+            trends_df["date_start"].dt.to_period("M").astype(str)
+            if "date_start" in trends_df.columns
+            else "Ismeretlen"
+        )
 
         def build_options(column_name):
             if column_name not in trends_df.columns:
@@ -1177,6 +1257,15 @@ with tab4:
             trends_df["geo_location"] = trends_df["geo_region"]
         elif "geo_city" in trends_df.columns:
             trends_df["geo_location"] = trends_df["geo_city"]
+        segment_dims = ("geo_location", "age_group", "gender", "device", "placement")
+        segment_metrics_df = build_segment_metrics_df(trends_df, segment_dims)
+        if "date_start" in segment_metrics_df.columns:
+            segment_metrics_df["date_start"] = pd.to_datetime(segment_metrics_df["date_start"], errors="coerce")
+            segment_metrics_df["month_period"] = (
+                segment_metrics_df["date_start"].dt.to_period("M").astype(str)
+            )
+        else:
+            segment_metrics_df["month_period"] = "Ismeretlen"
         geo_label = "Lokáció (megye/város)"
         geo_options = build_options("geo_location")
         age_options = build_options("age_group")
@@ -1246,7 +1335,7 @@ with tab4:
                 & (df["date_start"].dt.year == month_value.year)
             ]
 
-        segment_a = apply_month_filter(trends_df, month_a, all_month_a)
+        segment_a = apply_month_filter(segment_metrics_df, month_a, all_month_a)
         segment_a = filter_segment(
             segment_a,
             {
@@ -1258,7 +1347,7 @@ with tab4:
             },
         )
 
-        segment_b = apply_month_filter(trends_df, month_b, all_month_b)
+        segment_b = apply_month_filter(segment_metrics_df, month_b, all_month_b)
         segment_b = filter_segment(
             segment_b,
             {
@@ -1289,7 +1378,9 @@ with tab4:
             key="trend_metric",
         )
 
-        if "month_period" in trends_df.columns:
+        if fast_mode:
+            st.info("Gyors mód aktív: a trend chartok és forecasting számítások ki vannak kapcsolva.")
+        elif "month_period" in segment_metrics_df.columns:
             def metric_series(df_segment, label):
                 if trend_metric in df_segment.columns:
                     agg_func = "mean" if trend_metric == "roas" else "sum"
@@ -1310,88 +1401,100 @@ with tab4:
             else:
                 st.info("Nincs elég adat a trend charthoz.")
 
-        with st.expander("🔮 Forecasting (baseline / SARIMAX)", expanded=False):
-            st.markdown("Válassz előrejelzési módszert a szezonális trendekhez.")
-            forecast_method = st.selectbox(
-                "Módszer",
-                ["Baseline (utolsó 3 hónap átlaga)", "SARIMAX (szezonális)"],
-                key="forecast_method",
-                help=(
-                    "Baseline: fix átlagot vetít előre. SARIMAX: szezonális mintázatokat "
-                    "tanul, de 24+ hónap adatnál ad stabilabb eredményt."
-                ),
-            )
-            forecast_horizon = st.slider(
-                "Előrejelzés hónapok száma",
-                1,
-                6,
-                3,
-                key="forecast_horizon",
-                help="Hány hónapot jósoljon előre a modell.",
-            )
-            target_segment = st.selectbox("Szegmens", ["Szegmens A", "Szegmens B", "Mindkettő"], key="forecast_segment")
-
-            def build_baseline(series):
-                if series.empty:
-                    return None
-                series = series.copy()
-                series.index = pd.PeriodIndex(series.index, freq="M")
-                recent = series.tail(3)
-                baseline = recent.mean() if not recent.empty else series.mean()
-                future_periods = pd.period_range(start=series.index.max() + 1, periods=forecast_horizon, freq="M")
-                forecast = pd.Series([baseline] * forecast_horizon, index=future_periods)
-                combined = pd.DataFrame({
-                    "Tény": series.astype(float),
-                    "Előrejelzés": forecast.astype(float),
-                })
-                combined.index = combined.index.astype(str)
-                return combined
-
-            def build_sarimax(series):
-                if series.empty:
-                    return None
-                series = series.copy()
-                series.index = pd.PeriodIndex(series.index, freq="M")
-                values = series.astype(float)
-                if len(values) < 6:
-                    return None
-                seasonal_order = (1, 1, 1, 12) if len(values) >= 24 else (0, 0, 0, 0)
-                model = SARIMAX(
-                    values,
-                    order=(1, 1, 1),
-                    seasonal_order=seasonal_order,
-                    enforce_stationarity=False,
-                    enforce_invertibility=False,
+            with st.expander("🔮 Forecasting (baseline / SARIMAX)", expanded=False):
+                forecast_enabled = st.checkbox(
+                    "Forecasting számítása (lassabb)",
+                    value=False,
+                    key="forecast_enabled",
                 )
-                result = model.fit(disp=False)
-                forecast = result.forecast(steps=forecast_horizon)
-                future_periods = pd.period_range(start=values.index.max() + 1, periods=forecast_horizon, freq="M")
-                forecast.index = future_periods
-                combined = pd.DataFrame({
-                    "Tény": values,
-                    "Előrejelzés": forecast,
-                })
-                combined.index = combined.index.astype(str)
-                return combined
+                if not forecast_enabled:
+                    st.caption("Kapcsold be, ha szeretnél előrejelzést számítani.")
+                else:
+                    st.markdown("Válassz előrejelzési módszert a szezonális trendekhez.")
+                    forecast_method = st.selectbox(
+                        "Módszer",
+                        ["Baseline (utolsó 3 hónap átlaga)", "SARIMAX (szezonális)"],
+                        key="forecast_method",
+                        help=(
+                            "Baseline: fix átlagot vetít előre. SARIMAX: szezonális mintázatokat "
+                            "tanul, de 24+ hónap adatnál ad stabilabb eredményt."
+                        ),
+                    )
+                    forecast_horizon = st.slider(
+                        "Előrejelzés hónapok száma",
+                        1,
+                        6,
+                        3,
+                        key="forecast_horizon",
+                        help="Hány hónapot jósoljon előre a modell.",
+                    )
+                    target_segment = st.selectbox(
+                        "Szegmens",
+                        ["Szegmens A", "Szegmens B", "Mindkettő"],
+                        key="forecast_segment",
+                    )
 
-            def build_forecast(series):
-                if forecast_method.startswith("Baseline"):
-                    return build_baseline(series)
-                return build_sarimax(series)
+                    def build_baseline(series):
+                        if series.empty:
+                            return None
+                        series = series.copy()
+                        series.index = pd.PeriodIndex(series.index, freq="M")
+                        recent = series.tail(3)
+                        baseline = recent.mean() if not recent.empty else series.mean()
+                        future_periods = pd.period_range(start=series.index.max() + 1, periods=forecast_horizon, freq="M")
+                        forecast = pd.Series([baseline] * forecast_horizon, index=future_periods)
+                        combined = pd.DataFrame({
+                            "Tény": series.astype(float),
+                            "Előrejelzés": forecast.astype(float),
+                        })
+                        combined.index = combined.index.astype(str)
+                        return combined
 
-            def render_forecast(series, label):
-                forecast = build_forecast(series)
-                if forecast is None:
-                    st.info(f"{label}: nincs elég adat előrejelzéshez.")
-                    return
-                st.markdown(f"**{label} előrejelzés**")
-                st.line_chart(forecast)
+                    def build_sarimax(series):
+                        if series.empty:
+                            return None
+                        series = series.copy()
+                        series.index = pd.PeriodIndex(series.index, freq="M")
+                        values = series.astype(float)
+                        if len(values) < 6:
+                            return None
+                        seasonal_order = (1, 1, 1, 12) if len(values) >= 24 else (0, 0, 0, 0)
+                        model = SARIMAX(
+                            values,
+                            order=(1, 1, 1),
+                            seasonal_order=seasonal_order,
+                            enforce_stationarity=False,
+                            enforce_invertibility=False,
+                        )
+                        result = model.fit(disp=False)
+                        forecast = result.forecast(steps=forecast_horizon)
+                        future_periods = pd.period_range(start=values.index.max() + 1, periods=forecast_horizon, freq="M")
+                        forecast.index = future_periods
+                        combined = pd.DataFrame({
+                            "Tény": values,
+                            "Előrejelzés": forecast,
+                        })
+                        combined.index = combined.index.astype(str)
+                        return combined
 
-            if target_segment in ["Szegmens A", "Mindkettő"]:
-                render_forecast(series_a, "Szegmens A")
+                    def build_forecast(series):
+                        if forecast_method.startswith("Baseline"):
+                            return build_baseline(series)
+                        return build_sarimax(series)
 
-            if target_segment in ["Szegmens B", "Mindkettő"]:
-                render_forecast(series_b, "Szegmens B")
+                    def render_forecast(series, label):
+                        forecast = build_forecast(series)
+                        if forecast is None:
+                            st.info(f"{label}: nincs elég adat előrejelzéshez.")
+                            return
+                        st.markdown(f"**{label} előrejelzés**")
+                        st.line_chart(forecast)
+
+                    if target_segment in ["Szegmens A", "Mindkettő"]:
+                        render_forecast(series_a, "Szegmens A")
+
+                    if target_segment in ["Szegmens B", "Mindkettő"]:
+                        render_forecast(series_b, "Szegmens B")
     
     if st.session_state.scores_history:
         st.subheader("🖼️ Hirdetések Scoring Historia")

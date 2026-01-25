@@ -6,7 +6,26 @@ from analytics.rollups import build_rollups
 
 def load_uploaded_dataframe(uploaded_file, clean_excel_structure):
     if uploaded_file.name.endswith(".csv"):
-        return pd.read_csv(uploaded_file, encoding="utf-8-sig")
+        try:
+            return pd.read_csv(uploaded_file, encoding="utf-8-sig")
+        except pd.errors.ParserError:
+            uploaded_file.seek(0)
+            return pd.read_csv(
+                uploaded_file,
+                encoding="utf-8-sig",
+                sep=None,
+                engine="python",
+                on_bad_lines="skip",
+            )
+        except UnicodeDecodeError:
+            uploaded_file.seek(0)
+            return pd.read_csv(
+                uploaded_file,
+                encoding="latin-1",
+                sep=None,
+                engine="python",
+                on_bad_lines="skip",
+            )
     raw_df = pd.read_excel(uploaded_file)
     if uploaded_file.name.endswith((".xlsx", ".xls")):
         raw_df = clean_excel_structure(raw_df)

@@ -1271,15 +1271,6 @@ with tab4:
             trends_df["geo_location"] = trends_df["geo_region"]
         elif "geo_city" in trends_df.columns:
             trends_df["geo_location"] = trends_df["geo_city"]
-        segment_dims = ("geo_location", "age_group", "gender", "device", "placement")
-        segment_metrics_df = build_segment_metrics_df(trends_df, segment_dims)
-        if "date_start" in segment_metrics_df.columns:
-            segment_metrics_df["date_start"] = pd.to_datetime(segment_metrics_df["date_start"], errors="coerce")
-            segment_metrics_df["month_period"] = (
-                segment_metrics_df["date_start"].dt.to_period("M").astype(str)
-            )
-        else:
-            segment_metrics_df["month_period"] = "Ismeretlen"
         geo_label = "Lokáció (megye/város)"
         geo_options = build_options("geo_location")
         age_options = build_options("age_group")
@@ -1349,29 +1340,42 @@ with tab4:
                 & (df["date_start"].dt.year == month_value.year)
             ]
 
-        segment_a = apply_month_filter(segment_metrics_df, month_a, all_month_a)
-        segment_a = filter_segment(
-            segment_a,
-            {
-                "geo_location": geo_a,
-                "age_group": age_a,
-                "gender": gender_a,
-                "device": device_a,
-                "placement": placement_a,
-            },
-        )
+        def selected_segment_dimensions(filters):
+            return [key for key, value in filters.items() if value != "Összes"]
 
-        segment_b = apply_month_filter(segment_metrics_df, month_b, all_month_b)
-        segment_b = filter_segment(
-            segment_b,
-            {
-                "geo_location": geo_b,
-                "age_group": age_b,
-                "gender": gender_b,
-                "device": device_b,
-                "placement": placement_b,
-            },
-        )
+        segment_filters_a = {
+            "geo_location": geo_a,
+            "age_group": age_a,
+            "gender": gender_a,
+            "device": device_a,
+            "placement": placement_a,
+        }
+        segment_filters_b = {
+            "geo_location": geo_b,
+            "age_group": age_b,
+            "gender": gender_b,
+            "device": device_b,
+            "placement": placement_b,
+        }
+
+        segment_a_raw = apply_month_filter(trends_df, month_a, all_month_a)
+        segment_a_raw = filter_segment(segment_a_raw, segment_filters_a)
+        segment_b_raw = apply_month_filter(trends_df, month_b, all_month_b)
+        segment_b_raw = filter_segment(segment_b_raw, segment_filters_b)
+
+        segment_a = build_segment_metrics_df(segment_a_raw, selected_segment_dimensions(segment_filters_a))
+        segment_b = build_segment_metrics_df(segment_b_raw, selected_segment_dimensions(segment_filters_b))
+
+        if "date_start" in segment_a.columns:
+            segment_a["date_start"] = pd.to_datetime(segment_a["date_start"], errors="coerce")
+            segment_a["month_period"] = segment_a["date_start"].dt.to_period("M").astype(str)
+        else:
+            segment_a["month_period"] = "Ismeretlen"
+        if "date_start" in segment_b.columns:
+            segment_b["date_start"] = pd.to_datetime(segment_b["date_start"], errors="coerce")
+            segment_b["month_period"] = segment_b["date_start"].dt.to_period("M").astype(str)
+        else:
+            segment_b["month_period"] = "Ismeretlen"
 
         summary_a = segment_summary(build_deduped_metrics_df(segment_a))
         summary_b = segment_summary(build_deduped_metrics_df(segment_b))
@@ -1394,7 +1398,7 @@ with tab4:
 
         if fast_mode:
             st.info("Gyors mód aktív: a trend chartok és forecasting számítások ki vannak kapcsolva.")
-        elif "month_period" in segment_metrics_df.columns:
+        elif "month_period" in segment_a.columns or "month_period" in segment_b.columns:
             def metric_series(df_segment, label):
                 if trend_metric in df_segment.columns:
                     agg_func = "mean" if trend_metric == "roas" else "sum"

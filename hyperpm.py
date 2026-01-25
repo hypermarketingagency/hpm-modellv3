@@ -29,7 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_VERSION = "9.2.12"
+APP_VERSION = "9.2.13"
 logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
 
 # Header with Logo
@@ -389,12 +389,19 @@ def build_deduped_metrics_df(df):
     if not agg_map:
         return df
     def add_roas_column(result_df):
-        if "roas" in result_df.columns and result_df["roas"].notna().any():
-            return result_df
+        result_df = result_df.copy()
         if "conversion_value" in result_df.columns and "spend" in result_df.columns:
-            result_df = result_df.copy()
             result_df["roas"] = result_df["conversion_value"] / result_df["spend"]
             result_df["roas"] = result_df["roas"].replace([np.inf, -np.inf], np.nan).fillna(0)
+            return result_df
+        if "roas" in df.columns:
+            roas_mean = (
+                df.groupby(available_keys, dropna=False)["roas"]
+                .mean()
+                .reset_index()
+                .rename(columns={"roas": "roas"})
+            )
+            return result_df.merge(roas_mean, on=available_keys, how="left")
         return result_df
 
     if "breakdown_type" in df.columns:
@@ -434,12 +441,19 @@ def build_segment_metrics_df(df, segment_columns):
     if not agg_map:
         return df
     def add_roas_column(result_df):
-        if "roas" in result_df.columns and result_df["roas"].notna().any():
-            return result_df
+        result_df = result_df.copy()
         if "conversion_value" in result_df.columns and "spend" in result_df.columns:
-            result_df = result_df.copy()
             result_df["roas"] = result_df["conversion_value"] / result_df["spend"]
             result_df["roas"] = result_df["roas"].replace([np.inf, -np.inf], np.nan).fillna(0)
+            return result_df
+        if "roas" in df.columns:
+            roas_mean = (
+                df.groupby(available_keys, dropna=False)["roas"]
+                .mean()
+                .reset_index()
+                .rename(columns={"roas": "roas"})
+            )
+            return result_df.merge(roas_mean, on=available_keys, how="left")
         return result_df
 
     if "breakdown_type" in df.columns:

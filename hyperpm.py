@@ -29,7 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_VERSION = "9.2.10"
+APP_VERSION = "9.2.11"
 logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
 
 # Header with Logo
@@ -377,9 +377,17 @@ def build_deduped_metrics_df(df):
     available_keys = [key for key in base_keys if key in df.columns]
     if not available_keys:
         return df
-    agg_map = {col: "max" for col in metric_columns if col in df.columns}
+    agg_map = {col: "sum" for col in metric_columns if col in df.columns}
     if not agg_map:
         return df
+    if "breakdown_type" in df.columns:
+        per_breakdown = (
+            df.groupby(available_keys + ["breakdown_type"], dropna=False)
+            .agg(agg_map)
+            .reset_index()
+        )
+        metric_max = {col: "max" for col in agg_map}
+        return per_breakdown.groupby(available_keys, dropna=False).agg(metric_max).reset_index()
     return df.groupby(available_keys, dropna=False).agg(agg_map).reset_index()
 
 

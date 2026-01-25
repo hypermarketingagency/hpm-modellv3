@@ -1,31 +1,65 @@
+import csv
 import pandas as pd
 import streamlit as st
 
 from analytics.rollups import build_rollups
 
 
+def _detect_csv_header_and_delimiter(uploaded_file, encoding):
+    uploaded_file.seek(0)
+    sample_bytes = uploaded_file.read(65536)
+    uploaded_file.seek(0)
+    sample_text = sample_bytes.decode(encoding, errors="ignore")
+    lines = [line for line in sample_text.splitlines() if line.strip()]
+    header_keywords = [
+        "kampány",
+        "campaign",
+        "kampány neve",
+        "kampány név",
+        "nap",
+        "date",
+    ]
+    header_index = 0
+    header_line = lines[0] if lines else ""
+    for idx, line in enumerate(lines[:50]):
+        lowered = line.lower()
+        if any(keyword in lowered for keyword in header_keywords):
+            header_index = idx
+            header_line = line
+            break
+    try:
+        dialect = csv.Sniffer().sniff(header_line)
+        delimiter = dialect.delimiter
+    except csv.Error:
+        delimiter = None
+    return header_index, delimiter
+
+
+def _read_csv_with_fallbacks(uploaded_file, encoding):
+    skiprows, delimiter = _detect_csv_header_and_delimiter(uploaded_file, encoding)
+    read_kwargs = {
+        "encoding": encoding,
+        "engine": "python",
+        "on_bad_lines": "skip",
+        "skiprows": skiprows,
+    }
+    if delimiter:
+        read_kwargs["sep"] = delimiter
+    else:
+        read_kwargs["sep"] = None
+    return pd.read_csv(uploaded_file, **read_kwargs)
+
+
 def load_uploaded_dataframe(uploaded_file, clean_excel_structure):
     if uploaded_file.name.endswith(".csv"):
         try:
-            return pd.read_csv(uploaded_file, encoding="utf-8-sig")
-        except pd.errors.ParserError:
+            return _read_csv_with_fallbacks(uploaded_file, "utf-8-sig")
+        except (pd.errors.ParserError, UnicodeDecodeError):
             uploaded_file.seek(0)
-            return pd.read_csv(
-                uploaded_file,
-                encoding="utf-8-sig",
-                sep=None,
-                engine="python",
-                on_bad_lines="skip",
-            )
-        except UnicodeDecodeError:
+            return _read_csv_with_fallbacks(uploaded_file, "cp1250")
+        except Exception:
             uploaded_file.seek(0)
-            return pd.read_csv(
-                uploaded_file,
-                encoding="latin-1",
-                sep=None,
-                engine="python",
-                on_bad_lines="skip",
-            )
+            return _read_csv_with_fallbacks(uploaded_file, "latin-1")
     raw_df = pd.read_excel(uploaded_file)
     if uploaded_file.name.endswith((".xlsx", ".xls")):
         raw_df = clean_excel_structure(raw_df)

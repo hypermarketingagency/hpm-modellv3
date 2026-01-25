@@ -87,9 +87,12 @@ FACEBOOK_SKIP_COLUMNS = {
 GOOGLE_ADS_EXACT_MAPPING = {
     "Kampány": "campaign_name",
     "Kampány állapota": "campaign_status",
+    "Nap": "date_start",
     "Költség": "spend",
     "Interakciók": "clicks",
+    "Kattintások": "clicks",
     "Interakciós arány": "ctr_percent",
+    "CTR": "ctr_percent",
     "Konverziók": "conversions",
     "Konverziós érték": "conversion_value",
     "Konverziós érték/költség": "roas",
@@ -104,6 +107,7 @@ GOOGLE_ADS_EXACT_MAPPING = {
     "Nem": "gender",
     "City": "geo_city",
     "Város": "geo_city",
+    "Város (egyező)": "geo_city",
     "Region": "geo_region",
     "Régió": "geo_region",
     "Device": "device",
@@ -115,6 +119,7 @@ GOOGLE_ADS_SKIP_COLUMNS = {
     "Kampány állapota", "Költségkeret", "Költségkeret neve", "Költségkerettípus azonosítója",
     "Pénznem kód", "Állapot", "Állapot okai", "Optimalizálási pontszám", "Kampánytípus",
     "Ajánlattételi stratégia típusa", "Keresési megj. arány", "Eredeti konv. érték",
+    "Megj. (legelső) %-a", "Megj. (elöl) %-a",
 }
 
 TIKTOK_EXACT_MAPPING = {

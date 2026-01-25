@@ -114,12 +114,18 @@ def render_pulsing_logo(logo_url):
 
 @st.cache_data(show_spinner=False)
 def build_dashboard_summary(df):
-    summary = df.groupby("platform").agg({
+    if "platform" not in df.columns:
+        return pd.DataFrame()
+    metrics = {
         "spend": "sum",
         "conversions": "sum",
         "conversion_value": "sum",
         "impressions": "sum",
-    }).round(2)
+    }
+    metrics = {key: value for key, value in metrics.items() if key in df.columns}
+    if not metrics:
+        return df[["platform"]].drop_duplicates().reset_index(drop=True)
+    summary = df.groupby("platform").agg(metrics).round(2)
     return summary.reset_index()
 
 

@@ -388,6 +388,15 @@ def build_deduped_metrics_df(df):
     agg_map = {col: "sum" for col in metric_columns if col in df.columns}
     if not agg_map:
         return df
+    def add_roas_column(result_df):
+        if "roas" in result_df.columns and result_df["roas"].notna().any():
+            return result_df
+        if "conversion_value" in result_df.columns and "spend" in result_df.columns:
+            result_df = result_df.copy()
+            result_df["roas"] = result_df["conversion_value"] / result_df["spend"]
+            result_df["roas"] = result_df["roas"].replace([np.inf, -np.inf], np.nan).fillna(0)
+        return result_df
+
     if "breakdown_type" in df.columns:
         per_breakdown = (
             df.groupby(available_keys + ["breakdown_type"], dropna=False)
@@ -395,8 +404,10 @@ def build_deduped_metrics_df(df):
             .reset_index()
         )
         metric_max = {col: "max" for col in agg_map}
-        return per_breakdown.groupby(available_keys, dropna=False).agg(metric_max).reset_index()
-    return df.groupby(available_keys, dropna=False).agg(agg_map).reset_index()
+        aggregated = per_breakdown.groupby(available_keys, dropna=False).agg(metric_max).reset_index()
+        return add_roas_column(aggregated)
+    aggregated = df.groupby(available_keys, dropna=False).agg(agg_map).reset_index()
+    return add_roas_column(aggregated)
 
 @st.cache_data(show_spinner=False)
 def build_segment_metrics_df(df, segment_columns):
@@ -422,6 +433,15 @@ def build_segment_metrics_df(df, segment_columns):
     agg_map = {col: "sum" for col in metric_columns if col in df.columns}
     if not agg_map:
         return df
+    def add_roas_column(result_df):
+        if "roas" in result_df.columns and result_df["roas"].notna().any():
+            return result_df
+        if "conversion_value" in result_df.columns and "spend" in result_df.columns:
+            result_df = result_df.copy()
+            result_df["roas"] = result_df["conversion_value"] / result_df["spend"]
+            result_df["roas"] = result_df["roas"].replace([np.inf, -np.inf], np.nan).fillna(0)
+        return result_df
+
     if "breakdown_type" in df.columns:
         per_breakdown = (
             df.groupby(available_keys + ["breakdown_type"], dropna=False)
@@ -429,8 +449,10 @@ def build_segment_metrics_df(df, segment_columns):
             .reset_index()
         )
         metric_max = {col: "max" for col in agg_map}
-        return per_breakdown.groupby(available_keys, dropna=False).agg(metric_max).reset_index()
-    return df.groupby(available_keys, dropna=False).agg(agg_map).reset_index()
+        aggregated = per_breakdown.groupby(available_keys, dropna=False).agg(metric_max).reset_index()
+        return add_roas_column(aggregated)
+    aggregated = df.groupby(available_keys, dropna=False).agg(agg_map).reset_index()
+    return add_roas_column(aggregated)
 
 
 # ---------------------------------------------------------------------------

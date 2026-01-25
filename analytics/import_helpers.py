@@ -53,17 +53,24 @@ def _read_csv_with_fallbacks(uploaded_file, encoding):
 def load_uploaded_dataframe(uploaded_file, clean_excel_structure):
     if uploaded_file.name.endswith(".csv"):
         try:
-            return _read_csv_with_fallbacks(uploaded_file, "utf-8-sig")
+            df = _read_csv_with_fallbacks(uploaded_file, "utf-8-sig")
         except (pd.errors.ParserError, UnicodeDecodeError):
             uploaded_file.seek(0)
-            return _read_csv_with_fallbacks(uploaded_file, "cp1250")
+            df = _read_csv_with_fallbacks(uploaded_file, "cp1250")
         except Exception:
             uploaded_file.seek(0)
-            return _read_csv_with_fallbacks(uploaded_file, "latin-1")
-    raw_df = pd.read_excel(uploaded_file)
+            df = _read_csv_with_fallbacks(uploaded_file, "latin-1")
+    else:
+        df = pd.read_excel(uploaded_file)
     if uploaded_file.name.endswith((".xlsx", ".xls")):
-        raw_df = clean_excel_structure(raw_df)
-    return raw_df
+        df = clean_excel_structure(df)
+    df.columns = (
+        df.columns.astype(str)
+        .str.replace("\ufeff", "", regex=False)
+        .str.replace("\u00a0", " ", regex=False)
+        .str.strip()
+    )
+    return df
 
 
 def detect_breakdown_type(df):

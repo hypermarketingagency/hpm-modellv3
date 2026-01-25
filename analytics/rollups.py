@@ -5,6 +5,7 @@ DIMENSION_COLUMNS = [
     "age_group",
     "gender",
     "geo_city",
+    "geo_region",
     "device",
     "placement",
 ]
@@ -45,7 +46,14 @@ def build_rollups(df: pd.DataFrame) -> dict:
                 .reset_index()
                 .sort_values(["month", "platform"])
             )
-        if "geo_city" in enriched.columns:
+        if "geo_region" in enriched.columns:
+            rollups["regional"] = (
+                enriched.groupby(["geo_region", "platform"], dropna=False)
+                .agg(metrics)
+                .reset_index()
+                .sort_values(["geo_region", "platform"])
+            )
+        elif "geo_city" in enriched.columns:
             rollups["regional"] = (
                 enriched.groupby(["geo_city", "platform"], dropna=False)
                 .agg(metrics)

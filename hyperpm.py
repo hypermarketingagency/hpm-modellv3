@@ -29,7 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_VERSION = "9.2.7"
+APP_VERSION = "9.2.8"
 logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
 
 # Header with Logo
@@ -1050,10 +1050,24 @@ with tab4:
         if breakdown_filter:
             df = df[df["breakdown_type"].isin(breakdown_filter)]
 
+        metrics_df = df
+        if "breakdown_type" in df.columns and breakdown_options:
+            metrics_source = st.selectbox(
+                "Összesítés forrása",
+                ["Összes (duplikálhat)"] + breakdown_options,
+                help=(
+                    "Több fájlos importnál a breakdownok duplikálhatják az összegeket. "
+                    "Válassz egy forrást (pl. demography vagy geo) a pontos összesítéshez."
+                ),
+                key="metrics_source",
+            )
+            if metrics_source != "Összes (duplikálhat)":
+                metrics_df = df[df["breakdown_type"] == metrics_source]
+
         col1, col2, col3 = st.columns(3)
         with col1:
-            if "spend" in df.columns:
-                total_spend = df['spend'].sum()
+            if "spend" in metrics_df.columns:
+                total_spend = metrics_df['spend'].sum()
                 st.metric("💰 Összes Költség", f"{total_spend:,.0f} HUF")
         with col2:
             if st.session_state.scores_history:
@@ -1065,15 +1079,15 @@ with tab4:
         st.markdown("---")
 
         st.subheader("📈 Kampányok Összesítése")
-        summary = build_dashboard_summary(df)
+        summary = build_dashboard_summary(metrics_df)
         st.dataframe(summary, use_container_width=True)
 
         st.subheader("📋 Mintavétel (gyors nézet)")
-        st.dataframe(df.head(200), use_container_width=True)
+        st.dataframe(metrics_df.head(200), use_container_width=True)
 
         if show_full_table:
             st.subheader("📎 Teljes tábla (nagy adatmennyiség)")
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(metrics_df, use_container_width=True)
 
         if rollup_enabled:
             with st.spinner("Rollupok számítása..."):
@@ -1095,7 +1109,7 @@ with tab4:
         st.markdown("---")
         st.subheader("📊 Trendek")
 
-        trends_df = df.copy()
+        trends_df = metrics_df.copy()
         if "date_start" in trends_df.columns:
             trends_df["date_start"] = pd.to_datetime(trends_df["date_start"], errors="coerce")
             trends_df["month_period"] = trends_df["date_start"].dt.to_period("M").astype(str)
@@ -1279,8 +1293,19 @@ with tab4:
                 "Módszer",
                 ["Baseline (utolsó 3 hónap átlaga)", "SARIMAX (szezonális)"],
                 key="forecast_method",
+                help=(
+                    "Baseline: fix átlagot vetít előre. SARIMAX: szezonális mintázatokat "
+                    "tanul, de 24+ hónap adatnál ad stabilabb eredményt."
+                ),
             )
-            forecast_horizon = st.slider("Előrejelzés hónapok száma", 1, 6, 3, key="forecast_horizon")
+            forecast_horizon = st.slider(
+                "Előrejelzés hónapok száma",
+                1,
+                6,
+                3,
+                key="forecast_horizon",
+                help="Hány hónapot jósoljon előre a modell.",
+            )
             target_segment = st.selectbox("Szegmens", ["Szegmens A", "Szegmens B", "Mindkettő"], key="forecast_segment")
 
             def build_baseline(series):

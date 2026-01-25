@@ -29,7 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_VERSION = "9.2.9"
+APP_VERSION = "9.2.10"
 logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
 
 # Header with Logo
@@ -1044,7 +1044,9 @@ with tab4:
     if st.session_state.normalized_data is None:
         st.info("ℹ️ Nincs normalizált adat. Először tölts fel fájlokat a Tab1-ben.")
     else:
-        df = st.session_state.normalized_data.copy()
+        full_df = st.session_state.normalized_data.copy()
+        metrics_df = build_deduped_metrics_df(full_df)
+        df = full_df.copy()
 
         filter_cols = st.columns(3)
         with filter_cols[0]:
@@ -1075,8 +1077,6 @@ with tab4:
 
         if breakdown_filter:
             df = df[df["breakdown_type"].isin(breakdown_filter)]
-
-        metrics_df = build_deduped_metrics_df(df)
 
         col1, col2, col3 = st.columns(3)
         with col1:

@@ -358,6 +358,7 @@ def format_dataframe_for_display(df):
             display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "–")
     return display_df
 
+@st.cache_data(show_spinner=False)
 def build_deduped_metrics_df(df):
     metric_columns = [
         "spend",
@@ -1269,8 +1270,8 @@ with tab4:
             },
         )
 
-        summary_a = segment_summary(segment_a)
-        summary_b = segment_summary(segment_b)
+        summary_a = segment_summary(build_deduped_metrics_df(segment_a))
+        summary_b = segment_summary(build_deduped_metrics_df(segment_b))
 
         col1, col2, col3, col4 = st.columns(4)
         with col1:

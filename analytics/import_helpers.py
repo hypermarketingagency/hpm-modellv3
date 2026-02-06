@@ -1,38 +1,59 @@
 import csv
+import unicodedata
 import pandas as pd
 import streamlit as st
 
 from analytics.rollups import build_rollups
 
 
+def _normalize_text(value):
+    normalized = unicodedata.normalize("NFKD", str(value))
+    return "".join(char for char in normalized if not unicodedata.combining(char)).lower()
+
+
 def _detect_csv_header_and_delimiter(uploaded_file, encoding):
     uploaded_file.seek(0)
-    sample_bytes = uploaded_file.read(65536)
+    sample_bytes = uploaded_file.read(131072)
     uploaded_file.seek(0)
     sample_text = sample_bytes.decode(encoding, errors="ignore")
     lines = [line for line in sample_text.splitlines() if line.strip()]
-    header_keywords = [
-        "kampány",
-        "campaign",
-        "kampány neve",
-        "kampány név",
-        "nap",
-        "date",
-    ]
-    header_index = 0
-    header_line = lines[0] if lines else ""
-    for idx, line in enumerate(lines[:50]):
-        lowered = line.lower()
-        if any(keyword in lowered for keyword in header_keywords):
-            header_index = idx
-            header_line = line
-            break
-    try:
-        dialect = csv.Sniffer().sniff(header_line)
-        delimiter = dialect.delimiter
-    except csv.Error:
-        delimiter = None
-    return header_index, delimiter
+    if not lines:
+        return 0, None
+
+    header_keywords = ["kampany", "campaign", "nap", "date", "kattintas", "koltseg", "ctr", "megjel"]
+    candidate_delimiters = [",", ";", "	", "|"]
+
+    best_idx = 0
+    best_delim = None
+    best_score = -1
+
+    for idx, line in enumerate(lines[:120]):
+        normalized_line = _normalize_text(line)
+        keyword_hits = sum(1 for keyword in header_keywords if keyword in normalized_line)
+
+        line_best_delim = None
+        line_best_fields = 1
+        for delimiter in candidate_delimiters:
+            field_count = len(next(csv.reader([line], delimiter=delimiter)))
+            if field_count > line_best_fields:
+                line_best_fields = field_count
+                line_best_delim = delimiter
+
+        score = keyword_hits * 100 + line_best_fields
+        if score > best_score and line_best_fields >= 5:
+            best_score = score
+            best_idx = idx
+            best_delim = line_best_delim
+
+    header_line = lines[best_idx]
+    delimiter = best_delim
+    if delimiter is None:
+        try:
+            delimiter = csv.Sniffer().sniff(header_line).delimiter
+        except csv.Error:
+            delimiter = None
+
+    return best_idx, delimiter
 
 
 def _read_csv_with_fallbacks(uploaded_file, encoding):

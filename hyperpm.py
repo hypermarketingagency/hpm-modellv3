@@ -29,7 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_VERSION = "9.2.16"
+APP_VERSION = "9.2.17"
 logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
 
 # Header with Logo
@@ -526,6 +526,10 @@ def train_model(data):
     """Random Forest modell tanítása"""
     features = ['platform_encoded', 'emotion_score', 'attention_score', 'social_proof',
                 'urgency_fomo', 'visual_contrast', 'personalization', 'budget', 'cpc', 'ctr']
+    data = data.copy()
+    for feature in features:
+        if feature not in data.columns:
+            data[feature] = 0
     X = data[features].fillna(0)
     y = data['roas'].fillna(0)
     
@@ -1027,16 +1031,35 @@ with tab3:
     def prepare_training_dataframe(input_df):
         df_out = input_df.copy()
 
+        if "spend" not in df_out.columns and "Költség" in df_out.columns:
+            df_out["spend"] = df_out["Költség"]
+        if "cpc" not in df_out.columns and "Átl. CPC" in df_out.columns:
+            df_out["cpc"] = df_out["Átl. CPC"]
+        if "conversion_value" not in df_out.columns and "Konverziós érték" in df_out.columns:
+            df_out["conversion_value"] = df_out["Konverziós érték"]
+
         if "spend" in df_out.columns:
             df_out["spend"] = df_out["spend"].apply(parse_numeric_value)
+        if "cpc" in df_out.columns:
+            df_out["cpc"] = df_out["cpc"].apply(parse_numeric_value)
         if "conversion_value" in df_out.columns:
             df_out["conversion_value"] = df_out["conversion_value"].apply(parse_numeric_value)
+
+        if "clicks" in df_out.columns:
+            df_out["clicks"] = df_out["clicks"].apply(parse_numeric_value)
+        if "impressions" in df_out.columns:
+            df_out["impressions"] = df_out["impressions"].apply(parse_numeric_value)
 
         if "ctr" not in df_out.columns:
             if "ctr_percent" in df_out.columns:
                 df_out["ctr"] = df_out["ctr_percent"].apply(parse_percentage_value) / 100
             elif "CTR" in df_out.columns:
                 df_out["ctr"] = df_out["CTR"].apply(parse_percentage_value) / 100
+            elif "clicks" in df_out.columns and "impressions" in df_out.columns:
+                df_out["ctr"] = (df_out["clicks"] / df_out["impressions"]).replace([np.inf, -np.inf], np.nan)
+
+        if "cpc" not in df_out.columns and "spend" in df_out.columns and "clicks" in df_out.columns:
+            df_out["cpc"] = (df_out["spend"] / df_out["clicks"]).replace([np.inf, -np.inf], np.nan)
 
         if "budget" not in df_out.columns and "spend" in df_out.columns:
             df_out["budget"] = df_out["spend"]
@@ -1096,19 +1119,42 @@ with tab3:
         st.info("📌 Demo adatok használata - ideal teszteléshez")
         df = load_demo_data()
     else:
-        st.info("📁 Feltöltsd a saját CSV fájlodat")
-        uploaded_train = st.file_uploader("CSV fájl feltöltése", type=["csv", "xlsx", "xls"], key="train_csv")
-
-        if uploaded_train:
-            raw_train_df = load_uploaded_dataframe(uploaded_train, clean_excel_structure)
-            prepared_df = prepare_training_dataframe(raw_train_df)
-            if prepared_df.empty:
-                st.error("❌ A feltöltött fájlból nem állítható össze tanító adathalmaz. Ellenőrizd a spend/cpc/ctr/roas vagy conversion_value oszlopokat.")
+        if st.session_state.normalized_data is not None:
+            st.success("✅ Tab1 normalizált adata elérhető. Ezt használjuk tréningre.")
+            st.caption("Ha mégis külön tréning fájlt adnál meg, kapcsold ki az alábbi opciót.")
+            use_tab1_data = st.checkbox("Tab1 normalizált adat használata", value=True, key="use_tab1_for_training")
+            if use_tab1_data:
+                prepared_df = prepare_training_dataframe(st.session_state.normalized_data)
+                if prepared_df.empty:
+                    st.error("❌ A Tab1 normalizált adatból nem állítható össze tanító adathalmaz (kell: spend/cpc/ctr + roas vagy conversion_value).")
+                else:
+                    df = prepared_df
+                    st.info(f"📊 Tab1-ből előkészített tréning sorok: {len(df)}")
             else:
-                df = prepared_df
-                st.success(f"✅ Tréning adatok előkészítve: {len(df)} sor")
+                uploaded_train = st.file_uploader("CSV/Excel tréning fájl feltöltése", type=["csv", "xlsx", "xls"], key="train_csv")
+                if uploaded_train:
+                    raw_train_df = load_uploaded_dataframe(uploaded_train, clean_excel_structure)
+                    prepared_df = prepare_training_dataframe(raw_train_df)
+                    if prepared_df.empty:
+                        st.error("❌ A feltöltött fájlból nem állítható össze tanító adathalmaz. Ellenőrizd a spend/cpc/ctr/roas vagy conversion_value oszlopokat.")
+                    else:
+                        df = prepared_df
+                        st.success(f"✅ Tréning adatok előkészítve: {len(df)} sor")
         else:
-            st.warning("⚠️ Kérjük, tölts fel egy CSV/Excel fájlt!")
+            st.info("📁 Nincs Tab1 normalizált adat, ezért tölts fel külön tréning fájlt.")
+            uploaded_train = st.file_uploader("CSV/Excel tréning fájl feltöltése", type=["csv", "xlsx", "xls"], key="train_csv")
+            if uploaded_train:
+                raw_train_df = load_uploaded_dataframe(uploaded_train, clean_excel_structure)
+                prepared_df = prepare_training_dataframe(raw_train_df)
+                if prepared_df.empty:
+                    st.error("❌ A feltöltött fájlból nem állítható össze tanító adathalmaz. Ellenőrizd a spend/cpc/ctr/roas vagy conversion_value oszlopokat.")
+                else:
+                    df = prepared_df
+                    st.success(f"✅ Tréning adatok előkészítve: {len(df)} sor")
+        st.caption(
+            "Megjegyzés: a ROAS-megtérülést elsődlegesen a történeti spend + conversion_value/roas adatokból tanuljuk. "
+            "A neuromarketing feature-ök hiányában sem áll le a modell, csak kevesebb kreatív jelből tanul."
+        )
 
     model = None
     features = None

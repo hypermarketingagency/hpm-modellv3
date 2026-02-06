@@ -1406,6 +1406,14 @@ with tab4:
         device_options = build_options("device")
         placement_options = build_options("placement")
 
+        min_date = None
+        max_date = None
+        if "date_start" in trends_df.columns and trends_df["date_start"].notna().any():
+            date_series = pd.to_datetime(trends_df["date_start"], errors="coerce")
+            min_date = date_series.min().date()
+            max_date = date_series.max().date()
+        date_picker_available = min_date is not None and max_date is not None
+
         col_a, col_b = st.columns(2)
         with col_a:
             st.markdown("**🔹 Szegmens A**")
@@ -1497,8 +1505,8 @@ with tab4:
         else:
             segment_b["month_period"] = "Ismeretlen"
 
-        summary_a = segment_summary(segment_a)
-        summary_b = segment_summary(segment_b)
+        summary_a = segment_summary(build_deduped_metrics_df(segment_a))
+        summary_b = segment_summary(build_deduped_metrics_df(segment_b))
 
         col1, col2, col3, col4 = st.columns(4)
         with col1:

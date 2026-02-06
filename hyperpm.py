@@ -29,7 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_VERSION = "9.2.15"
+APP_VERSION = "9.2.16"
 logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
 
 # Header with Logo
@@ -582,6 +582,8 @@ if "scores_history" not in st.session_state:
     st.session_state.scores_history = []
 if "trained_model" not in st.session_state:
     st.session_state.trained_model = None
+if "model_metrics" not in st.session_state:
+    st.session_state.model_metrics = None
 
 # ---------------------------------------------------------------------------
 # 🎯 MAIN TAB STRUCTURE
@@ -1021,64 +1023,141 @@ with tab3:
     st.markdown("### 🧠 Fázis 3: Model Training & Előrejelzés")
     
     st.markdown("**Válaszd ki az adatforrást:**")
-    
+
+    def prepare_training_dataframe(input_df):
+        df_out = input_df.copy()
+
+        if "spend" in df_out.columns:
+            df_out["spend"] = df_out["spend"].apply(parse_numeric_value)
+        if "conversion_value" in df_out.columns:
+            df_out["conversion_value"] = df_out["conversion_value"].apply(parse_numeric_value)
+
+        if "ctr" not in df_out.columns:
+            if "ctr_percent" in df_out.columns:
+                df_out["ctr"] = df_out["ctr_percent"].apply(parse_percentage_value) / 100
+            elif "CTR" in df_out.columns:
+                df_out["ctr"] = df_out["CTR"].apply(parse_percentage_value) / 100
+
+        if "budget" not in df_out.columns and "spend" in df_out.columns:
+            df_out["budget"] = df_out["spend"]
+
+        if "roas" not in df_out.columns and "conversion_value" in df_out.columns and "spend" in df_out.columns:
+            df_out["roas"] = (df_out["conversion_value"] / df_out["spend"]).replace([np.inf, -np.inf], np.nan)
+
+        default_features = {
+            "emotion_score": 0.5,
+            "attention_score": 0.5,
+            "social_proof": 5,
+            "urgency_fomo": 0,
+            "visual_contrast": 0.6,
+            "personalization": 0.5,
+        }
+        for feature_name, default_value in default_features.items():
+            if feature_name not in df_out.columns:
+                df_out[feature_name] = default_value
+
+        if "platform" not in df_out.columns:
+            df_out["platform"] = "Google Ads"
+
+        required_cols = [
+            "emotion_score", "attention_score", "social_proof", "urgency_fomo",
+            "visual_contrast", "personalization", "budget", "cpc", "ctr", "roas", "platform"
+        ]
+        for col in required_cols:
+            if col not in df_out.columns:
+                df_out[col] = np.nan
+
+        converters = {
+            "emotion_score": parse_numeric_value,
+            "attention_score": parse_numeric_value,
+            "social_proof": parse_numeric_value,
+            "urgency_fomo": parse_numeric_value,
+            "visual_contrast": parse_numeric_value,
+            "personalization": parse_numeric_value,
+            "budget": parse_numeric_value,
+            "cpc": parse_numeric_value,
+            "ctr": parse_numeric_value,
+            "roas": parse_numeric_value,
+        }
+        for col, parser in converters.items():
+            df_out[col] = df_out[col].apply(parser)
+
+        df_out.loc[df_out["ctr"] > 1, "ctr"] = df_out.loc[df_out["ctr"] > 1, "ctr"] / 100
+
+        df_out = df_out.dropna(subset=["budget", "cpc", "ctr", "roas"]).copy()
+        return df_out
+
     col1, col2 = st.columns(2)
     with col1:
         data_source = st.radio("Adatforrás", ["Demo Adatok", "Saját CSV"], key="data_source")
-    
+
+    df = None
     if data_source == "Demo Adatok":
         st.info("📌 Demo adatok használata - ideal teszteléshez")
         df = load_demo_data()
     else:
         st.info("📁 Feltöltsd a saját CSV fájlodat")
-        uploaded_train = st.file_uploader("CSV fájl feltöltése", type="csv", key="train_csv")
-        
+        uploaded_train = st.file_uploader("CSV fájl feltöltése", type=["csv", "xlsx", "xls"], key="train_csv")
+
         if uploaded_train:
-            df = pd.read_csv(uploaded_train)
-            required_cols = ['emotion_score', 'attention_score', 'social_proof', 'urgency_fomo',
-                           'visual_contrast', 'personalization', 'budget', 'cpc', 'ctr', 'roas']
-            missing_cols = [col for col in required_cols if col not in df.columns]
-            if missing_cols:
-                st.error(f"❌ Hiányzó oszlopok: {', '.join(missing_cols)}")
-                st.stop()
+            raw_train_df = load_uploaded_dataframe(uploaded_train, clean_excel_structure)
+            prepared_df = prepare_training_dataframe(raw_train_df)
+            if prepared_df.empty:
+                st.error("❌ A feltöltött fájlból nem állítható össze tanító adathalmaz. Ellenőrizd a spend/cpc/ctr/roas vagy conversion_value oszlopokat.")
+            else:
+                df = prepared_df
+                st.success(f"✅ Tréning adatok előkészítve: {len(df)} sor")
         else:
-            st.warning("⚠️ Kérjük, tölts fel egy CSV fájlt!")
-            st.stop()
-    
-    # Platform encoding
-    if 'platform' in df.columns:
-        df['platform_encoded'] = df['platform'].map(
-            {'Facebook': 0, 'Google Ads': 1, 'TikTok': 2}
-        ).fillna(0).astype(int)
-    else:
-        df['platform_encoded'] = 0
-        df['platform'] = 'Facebook'
-    
-    # Model tanítás
-    model, rmse, r2, features = train_model(df)
-    st.session_state.trained_model = (model, features)
-    
+            st.warning("⚠️ Kérjük, tölts fel egy CSV/Excel fájlt!")
+
+    model = None
+    features = None
+
+    if df is not None:
+        # Platform encoding
+        if 'platform' in df.columns:
+            df['platform_encoded'] = df['platform'].map(
+                {'Facebook': 0, 'Google Ads': 1, 'TikTok': 2}
+            ).fillna(0).astype(int)
+        else:
+            df['platform_encoded'] = 0
+            df['platform'] = 'Facebook'
+
+        # Model tanítás
+        model, rmse, r2, features = train_model(df)
+        st.session_state.trained_model = (model, features)
+        st.session_state.model_metrics = {"rmse": rmse, "r2": r2}
+    elif st.session_state.trained_model:
+        model, features = st.session_state.trained_model
+
     st.sidebar.markdown("---")
     st.sidebar.subheader("📈 Model Teljesítmény")
     col1, col2 = st.sidebar.columns(2)
-    with col1:
-        st.metric(
-            "R² Score",
-            f"{r2:.3f}",
-            help=(
-                "R² (determinációs együttható) mutatja, hogy a modell mennyire magyarázza "
-                "a ROAS szórását. 1.0 = tökéletes illeszkedés."
-            ),
-        )
-    with col2:
-        st.metric(
-            "RMSE",
-            f"{rmse:.3f}",
-            help=(
-                "RMSE (Root Mean Squared Error) az előrejelzési hiba nagyságát mutatja. "
-                "Minél alacsonyabb, annál jobb."
-            ),
-        )
+    model_metrics = st.session_state.model_metrics
+    if model_metrics:
+        with col1:
+            st.metric(
+                "R² Score",
+                f"{model_metrics['r2']:.3f}",
+                help=(
+                    "R² (determinációs együttható) mutatja, hogy a modell mennyire magyarázza "
+                    "a ROAS szórását. 1.0 = tökéletes illeszkedés."
+                ),
+            )
+        with col2:
+            st.metric(
+                "RMSE",
+                f"{model_metrics['rmse']:.3f}",
+                help=(
+                    "RMSE (Root Mean Squared Error) az előrejelzési hiba nagyságát mutatja. "
+                    "Minél alacsonyabb, annál jobb."
+                ),
+            )
+    else:
+        with col1:
+            st.metric("R² Score", "—")
+        with col2:
+            st.metric("RMSE", "—")
     
     st.markdown("---")
     st.subheader("🎯 Manuális ROAS Előrejelzés")
@@ -1117,7 +1196,10 @@ with tab3:
     
     ctr_manual = st.number_input("Várható CTR (%)", 0.1, 15.0, 2.5, 0.1, key="ctr_manual")
     
-    if st.button("🔮 ROAS Előrejelzés", type="primary", key="manual_prediction"):
+    if model is None:
+        st.info("ℹ️ Előrejelzéshez először taníts modellt demo vagy saját adatokkal.")
+
+    if st.button("🔮 ROAS Előrejelzés", type="primary", key="manual_prediction", disabled=model is None):
         plat_enc = {"Facebook": 0, "Google Ads": 1, "TikTok": 2}[platform_manual]
         
         input_data = pd.DataFrame({

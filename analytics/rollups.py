@@ -95,10 +95,10 @@ def segment_summary(df: pd.DataFrame) -> pd.Series:
         "conversions": df["conversions"].sum() if "conversions" in df.columns else 0,
         "conversion_value": df["conversion_value"].sum() if "conversion_value" in df.columns else 0,
     }
-    if "roas" in df.columns and df["roas"].notna().any():
-        summary["roas"] = df["roas"].mean()
-    elif summary["spend"]:
+    if summary["spend"]:
         summary["roas"] = summary["conversion_value"] / summary["spend"]
+    elif "roas" in df.columns and df["roas"].notna().any():
+        summary["roas"] = df["roas"].mean()
     else:
         summary["roas"] = 0
     return pd.Series(summary)

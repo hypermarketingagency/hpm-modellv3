@@ -29,7 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_VERSION = "9.2.14"
+APP_VERSION = "9.2.15"
 logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
 
 # Header with Logo
@@ -760,8 +760,11 @@ with tab1:
             if "conversion_value" in metrics_df.columns:
                 st.metric("💵 Érték", f"{metrics_df['conversion_value'].sum():,.0f} HUF")
         with col3:
-            if "roas" in st.session_state.normalized_data.columns and st.session_state.normalized_data["roas"].notna().any():
-                st.metric("📈 ROAS", f"{st.session_state.normalized_data['roas'].mean():.2f}x")
+            if "spend" in metrics_df.columns and "conversion_value" in metrics_df.columns:
+                total_spend = metrics_df["spend"].sum()
+                total_value = metrics_df["conversion_value"].sum()
+                roas_total = (total_value / total_spend) if total_spend else 0
+                st.metric("📈 ROAS", f"{roas_total:.2f}x")
 
         display_df = format_dataframe_for_display(st.session_state.normalized_data)
         st.dataframe(display_df, use_container_width=True)
@@ -1443,11 +1446,18 @@ with tab4:
             st.info("Gyors mód aktív: a trend chartok és forecasting számítások ki vannak kapcsolva.")
         elif "month_period" in segment_a.columns or "month_period" in segment_b.columns:
             def metric_series(df_segment, label):
-                if trend_metric in df_segment.columns:
-                    agg_func = "mean" if trend_metric == "roas" else "sum"
+                if trend_metric == "roas":
+                    if "conversion_value" in df_segment.columns and "spend" in df_segment.columns:
+                        grouped_base = df_segment.groupby("month_period")[["conversion_value", "spend"]].sum()
+                        grouped = (grouped_base["conversion_value"] / grouped_base["spend"]).replace([np.inf, -np.inf], np.nan).fillna(0).rename(label)
+                    elif "roas" in df_segment.columns:
+                        grouped = df_segment.groupby("month_period")["roas"].mean().rename(label)
+                    else:
+                        grouped = pd.Series(dtype=float)
+                elif trend_metric in df_segment.columns:
                     grouped = (
                         df_segment.groupby("month_period")[trend_metric]
-                        .agg(agg_func)
+                        .sum()
                         .rename(label)
                     )
                 else:

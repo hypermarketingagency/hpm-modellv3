@@ -5,6 +5,7 @@ DIMENSION_COLUMNS = [
     "age_group",
     "gender",
     "geo_city",
+    "geo_region",
     "device",
     "placement",
 ]
@@ -45,7 +46,14 @@ def build_rollups(df: pd.DataFrame) -> dict:
                 .reset_index()
                 .sort_values(["month", "platform"])
             )
-        if "geo_city" in enriched.columns:
+        if "geo_region" in enriched.columns:
+            rollups["regional"] = (
+                enriched.groupby(["geo_region", "platform"], dropna=False)
+                .agg(metrics)
+                .reset_index()
+                .sort_values(["geo_region", "platform"])
+            )
+        elif "geo_city" in enriched.columns:
             rollups["regional"] = (
                 enriched.groupby(["geo_city", "platform"], dropna=False)
                 .agg(metrics)
@@ -87,10 +95,10 @@ def segment_summary(df: pd.DataFrame) -> pd.Series:
         "conversions": df["conversions"].sum() if "conversions" in df.columns else 0,
         "conversion_value": df["conversion_value"].sum() if "conversion_value" in df.columns else 0,
     }
-    if "roas" in df.columns and df["roas"].notna().any():
-        summary["roas"] = df["roas"].mean()
-    elif summary["spend"]:
+    if summary["spend"]:
         summary["roas"] = summary["conversion_value"] / summary["spend"]
+    elif "roas" in df.columns and df["roas"].notna().any():
+        summary["roas"] = df["roas"].mean()
     else:
         summary["roas"] = 0
     return pd.Series(summary)

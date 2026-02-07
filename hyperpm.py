@@ -6,6 +6,7 @@ import io
 from PIL import Image
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.model_selection import train_test_split
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from analytics.rollups import filter_segment, segment_summary
 from analytics.import_helpers import (
@@ -29,7 +30,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_VERSION = "9.2.17"
+APP_VERSION = "9.2.18"
 logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
 
 # Header with Logo
@@ -542,6 +543,27 @@ def train_model(data):
     
     return model, rmse, r2, features
 
+
+def train_regression_model(data, features, target):
+    dataset = data.copy()
+    X = dataset[features].fillna(0)
+    y = dataset[target].fillna(0)
+    if len(dataset) < 30:
+        model = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=8)
+        model.fit(X, y)
+        pred = model.predict(X)
+        rmse = np.sqrt(mean_squared_error(y, pred))
+        r2 = r2_score(y, pred)
+        return model, rmse, r2
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = RandomForestRegressor(n_estimators=200, random_state=42, max_depth=12)
+    model.fit(X_train, y_train)
+    pred = model.predict(X_test)
+    rmse = np.sqrt(mean_squared_error(y_test, pred))
+    r2 = r2_score(y_test, pred)
+    return model, rmse, r2
+
 @st.cache_resource
 def load_demo_data():
     """Demo adatok generálása"""
@@ -588,6 +610,8 @@ if "trained_model" not in st.session_state:
     st.session_state.trained_model = None
 if "model_metrics" not in st.session_state:
     st.session_state.model_metrics = None
+if "model_target" not in st.session_state:
+    st.session_state.model_target = "roas"
 
 # ---------------------------------------------------------------------------
 # 🎯 MAIN TAB STRUCTURE
@@ -1024,9 +1048,17 @@ with tab2:
 # ---------------------------------------------------------------------------
 
 with tab3:
-    st.markdown("### 🧠 Fázis 3: Model Training & Előrejelzés")
+    st.markdown("### 🧠 Fázis 3: MMM Light (üzleti megtérülés modell)")
     
     st.markdown("**Válaszd ki az adatforrást:**")
+
+    st.info("ℹ️ Ez a tab most MMM light logikával működik: a platform teljesítmény adatokból tanul (nem kreatív neuromarketing score-ból).")
+    model_mode = st.radio(
+        "Tab3 mód",
+        ["MMM Light (ajánlott)", "Legacy neuromarketing"],
+        horizontal=True,
+        key="tab3_mode",
+    )
 
     def prepare_training_dataframe(input_df):
         df_out = input_df.copy()
@@ -1169,10 +1201,23 @@ with tab3:
             df['platform_encoded'] = 0
             df['platform'] = 'Facebook'
 
-        # Model tanítás
-        model, rmse, r2, features = train_model(df)
-        st.session_state.trained_model = (model, features)
-        st.session_state.model_metrics = {"rmse": rmse, "r2": r2}
+        if model_mode.startswith("MMM Light"):
+            mmm_features = [f for f in ["platform_encoded", "budget", "cpc", "ctr"] if f in df.columns]
+            target_col = "conversion_value" if "conversion_value" in df.columns and df["conversion_value"].notna().any() else "roas"
+            if target_col not in df.columns:
+                st.error("❌ MMM Light modellhez nincs target oszlop (conversion_value vagy roas).")
+            else:
+                model, rmse, r2 = train_regression_model(df, mmm_features, target_col)
+                features = mmm_features
+                st.session_state.trained_model = (model, features)
+                st.session_state.model_metrics = {"rmse": rmse, "r2": r2}
+                st.session_state.model_target = target_col
+                st.success(f"✅ MMM Light modell tanítva. Target: {target_col}")
+        else:
+            model, rmse, r2, features = train_model(df)
+            st.session_state.trained_model = (model, features)
+            st.session_state.model_metrics = {"rmse": rmse, "r2": r2}
+            st.session_state.model_target = "roas"
     elif st.session_state.trained_model:
         model, features = st.session_state.trained_model
 
@@ -1245,38 +1290,54 @@ with tab3:
     if model is None:
         st.info("ℹ️ Előrejelzéshez először taníts modellt demo vagy saját adatokkal.")
 
-    if st.button("🔮 ROAS Előrejelzés", type="primary", key="manual_prediction", disabled=model is None):
+    if st.button("🔮 Előrejelzés", type="primary", key="manual_prediction", disabled=model is None):
         plat_enc = {"Facebook": 0, "Google Ads": 1, "TikTok": 2}[platform_manual]
-        
-        input_data = pd.DataFrame({
-            'platform_encoded': [plat_enc],
-            'emotion_score': [emotion_manual],
-            'attention_score': [attention_manual],
-            'social_proof': [social_proof_manual],
-            'urgency_fomo': [int(urgency_manual)],
-            'visual_contrast': [visual_manual],
-            'personalization': [personal_manual],
-            'budget': [budget_manual],
-            'cpc': [cpc_manual],
-            'ctr': [ctr_manual / 100]
-        })
-        
-        roas_pred = model.predict(input_data)[0]
-        revenue = budget_manual * roas_pred
-        profit = revenue - budget_manual
-        
+
+        all_input = {
+            'platform_encoded': plat_enc,
+            'emotion_score': emotion_manual,
+            'attention_score': attention_manual,
+            'social_proof': social_proof_manual,
+            'urgency_fomo': int(urgency_manual),
+            'visual_contrast': visual_manual,
+            'personalization': personal_manual,
+            'budget': budget_manual,
+            'cpc': cpc_manual,
+            'ctr': ctr_manual / 100,
+        }
+        model_input = pd.DataFrame([{feature: all_input.get(feature, 0) for feature in features}])
+        prediction = model.predict(model_input)[0]
+        target_col = st.session_state.get("model_target", "roas")
+
         st.markdown("---")
         st.subheader("📊 Előrejelzés Eredménye")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("💰 Várható ROAS", f"{roas_pred:.2f}x", delta=f"+{roas_pred-1:.2f}x profit")
-        with col2:
-            st.metric("💵 Bevétel", f"{revenue:,.0f} HUF", delta=f"+{profit:,.0f} HUF")
-        with col3:
-            st.metric("🎯 CTR", f"{ctr_manual:.1f}%")
-        with col4:
-            st.metric("💳 CPC", f"{cpc_manual:.0f} HUF")
+
+        if target_col == "conversion_value":
+            est_value = max(prediction, 0)
+            roas_from_pred = (est_value / budget_manual) if budget_manual else 0
+            profit = est_value - budget_manual
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("💵 Várható érték", f"{est_value:,.0f} HUF")
+            with col2:
+                st.metric("💰 Becsült ROAS", f"{roas_from_pred:.2f}x")
+            with col3:
+                st.metric("📈 Becsült profit", f"{profit:,.0f} HUF")
+            with col4:
+                st.metric("🎯 CTR", f"{ctr_manual:.1f}%")
+        else:
+            roas_pred = prediction
+            revenue = budget_manual * roas_pred
+            profit = revenue - budget_manual
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("💰 Várható ROAS", f"{roas_pred:.2f}x", delta=f"+{roas_pred-1:.2f}x profit")
+            with col2:
+                st.metric("💵 Bevétel", f"{revenue:,.0f} HUF", delta=f"+{profit:,.0f} HUF")
+            with col3:
+                st.metric("🎯 CTR", f"{ctr_manual:.1f}%")
+            with col4:
+                st.metric("💳 CPC", f"{cpc_manual:.0f} HUF")
 
 # ---------------------------------------------------------------------------
 # TAB 4: DASHBOARD

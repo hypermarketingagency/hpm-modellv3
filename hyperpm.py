@@ -30,7 +30,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_VERSION = "9.2.18"
+APP_VERSION = "9.2.19"
 logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
 
 # Header with Logo
@@ -1053,6 +1053,7 @@ with tab3:
     st.markdown("**Válaszd ki az adatforrást:**")
 
     st.info("ℹ️ Ez a tab most MMM light logikával működik: a platform teljesítmény adatokból tanul (nem kreatív neuromarketing score-ból).")
+    st.caption("Megjegyzés: ez NEM a Google Meridian hivatalos MMM implementációja, hanem egy egyszerűsített (light) becslő modell.")
     model_mode = st.radio(
         "Tab3 mód",
         ["MMM Light (ajánlott)", "Legacy neuromarketing"],
@@ -1210,13 +1211,13 @@ with tab3:
                 model, rmse, r2 = train_regression_model(df, mmm_features, target_col)
                 features = mmm_features
                 st.session_state.trained_model = (model, features)
-                st.session_state.model_metrics = {"rmse": rmse, "r2": r2}
+                st.session_state.model_metrics = {"rmse": rmse, "r2": r2, "nrmse": (rmse / max(df[target_col].mean(), 1e-9)) if target_col == "conversion_value" else rmse}
                 st.session_state.model_target = target_col
                 st.success(f"✅ MMM Light modell tanítva. Target: {target_col}")
         else:
             model, rmse, r2, features = train_model(df)
             st.session_state.trained_model = (model, features)
-            st.session_state.model_metrics = {"rmse": rmse, "r2": r2}
+            st.session_state.model_metrics = {"rmse": rmse, "r2": r2, "nrmse": rmse}
             st.session_state.model_target = "roas"
     elif st.session_state.trained_model:
         model, features = st.session_state.trained_model
@@ -1236,19 +1237,23 @@ with tab3:
                 ),
             )
         with col2:
-            st.metric(
-                "RMSE",
-                f"{model_metrics['rmse']:.3f}",
-                help=(
-                    "RMSE (Root Mean Squared Error) az előrejelzési hiba nagyságát mutatja. "
-                    "Minél alacsonyabb, annál jobb."
-                ),
+            target_label = st.session_state.get("model_target", "roas")
+            rmse_label = "RMSE (HUF)" if target_label == "conversion_value" else "RMSE"
+            rmse_help = (
+                "RMSE a target egységében értendő. conversion_value targetnél HUF, ezért számszerűen nagy lehet. "
+                "Értelmezéshez nézd az nRMSE mutatót is."
+                if target_label == "conversion_value"
+                else "RMSE (Root Mean Squared Error) az előrejelzési hiba nagyságát mutatja. Minél alacsonyabb, annál jobb."
             )
+            st.metric(rmse_label, f"{model_metrics['rmse']:.3f}", help=rmse_help)
     else:
         with col1:
             st.metric("R² Score", "—")
         with col2:
             st.metric("RMSE", "—")
+
+    if model_metrics and st.session_state.get("model_target") == "conversion_value":
+        st.sidebar.caption(f"nRMSE: {model_metrics.get('nrmse', 0) * 100:.1f}%")
     
     st.markdown("---")
     st.subheader("🎯 Manuális ROAS Előrejelzés")
@@ -1286,6 +1291,7 @@ with tab3:
         cpc_manual = st.number_input("Várható CPC (HUF)", 10, 1000, 300, 10, key="cpc_manual")
     
     ctr_manual = st.number_input("Várható CTR (%)", 0.1, 15.0, 2.5, 0.1, key="ctr_manual")
+    margin_percent = st.slider("Átlag árrés (%)", 5, 95, 35, 1, key="margin_percent")
     
     if model is None:
         st.info("ℹ️ Előrejelzéshez először taníts modellt demo vagy saját adatokkal.")
@@ -1315,20 +1321,20 @@ with tab3:
         if target_col == "conversion_value":
             est_value = max(prediction, 0)
             roas_from_pred = (est_value / budget_manual) if budget_manual else 0
-            profit = est_value - budget_manual
+            profit = (est_value * (margin_percent / 100)) - budget_manual
             col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric("💵 Várható érték", f"{est_value:,.0f} HUF")
             with col2:
                 st.metric("💰 Becsült ROAS", f"{roas_from_pred:.2f}x")
             with col3:
-                st.metric("📈 Becsült profit", f"{profit:,.0f} HUF")
+                st.metric("📈 Becsült profit (árréssel)", f"{profit:,.0f} HUF")
             with col4:
                 st.metric("🎯 CTR", f"{ctr_manual:.1f}%")
         else:
             roas_pred = prediction
             revenue = budget_manual * roas_pred
-            profit = revenue - budget_manual
+            profit = (revenue * (margin_percent / 100)) - budget_manual
             col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric("💰 Várható ROAS", f"{roas_pred:.2f}x", delta=f"+{roas_pred-1:.2f}x profit")

@@ -8,6 +8,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 from statsmodels.tsa.statespace.sarimax import SARIMAX
+import statsmodels.api as sm
 from analytics.rollups import filter_segment, segment_summary
 from analytics.import_helpers import (
     annotate_source_columns,
@@ -30,7 +31,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-APP_VERSION = "9.2.19"
+APP_VERSION = "9.2.20"
 logo_url = "https://raw.githubusercontent.com/hypermarketingagency/hpm-modellv3/main/hyper_logo_2025_eredeti.png"
 
 # Header with Logo
@@ -564,6 +565,67 @@ def train_regression_model(data, features, target):
     r2 = r2_score(y_test, pred)
     return model, rmse, r2
 
+def _adstock(series, alpha=0.5):
+    values = series.fillna(0).astype(float).values
+    out = np.zeros_like(values, dtype=float)
+    for i, val in enumerate(values):
+        out[i] = val if i == 0 else val + alpha * out[i - 1]
+    return pd.Series(out, index=series.index)
+
+
+def _saturation(series, lam=1.0):
+    x = series.fillna(0).astype(float)
+    return 1 - np.exp(-lam * x)
+
+
+def train_meridian_advanced(data):
+    dataset = data.copy()
+    if "date_start" in dataset.columns:
+        dataset["date_start"] = pd.to_datetime(dataset["date_start"], errors="coerce")
+        dataset["month_period"] = dataset["date_start"].dt.to_period("M").astype(str)
+    else:
+        dataset["month_period"] = "all"
+
+    monthly = dataset.groupby("month_period", dropna=False).agg({
+        "budget": "sum",
+        "cpc": "mean",
+        "ctr": "mean",
+        "conversion_value": "sum" if "conversion_value" in dataset.columns else "count",
+    }).reset_index()
+    if "conversion_value" not in monthly.columns:
+        monthly["conversion_value"] = dataset.groupby("month_period").size().values
+
+    monthly["spend_adstock"] = _adstock(monthly["budget"], alpha=0.5)
+    spend_scale = monthly["spend_adstock"].max() if monthly["spend_adstock"].max() else 1
+    monthly["spend_sat"] = _saturation(monthly["spend_adstock"] / spend_scale, lam=2.0)
+    monthly["trend_idx"] = np.arange(len(monthly), dtype=float)
+
+    X = monthly[["spend_sat", "ctr", "cpc", "trend_idx"]].fillna(0)
+    y = monthly["conversion_value"].fillna(0)
+    X_const = sm.add_constant(X, has_constant="add")
+
+    model = sm.OLS(y, X_const).fit()
+    pred = model.predict(X_const)
+    rmse = float(np.sqrt(mean_squared_error(y, pred)))
+    r2 = float(r2_score(y, pred)) if len(y.unique()) > 1 else 0.0
+
+    contribution = pd.DataFrame({
+        "feature": ["spend_sat", "ctr", "cpc", "trend_idx"],
+        "coef": [model.params.get("spend_sat", 0), model.params.get("ctr", 0), model.params.get("cpc", 0), model.params.get("trend_idx", 0)],
+        "p_value": [model.pvalues.get("spend_sat", np.nan), model.pvalues.get("ctr", np.nan), model.pvalues.get("cpc", np.nan), model.pvalues.get("trend_idx", np.nan)],
+    })
+
+    payload = {
+        "type": "meridian_advanced",
+        "model": model,
+        "features": ["spend_sat", "ctr", "cpc", "trend_idx"],
+        "train_df": monthly,
+        "rmse": rmse,
+        "r2": r2,
+        "contribution": contribution,
+    }
+    return payload
+
 @st.cache_resource
 def load_demo_data():
     """Demo adatok generálása"""
@@ -612,6 +674,8 @@ if "model_metrics" not in st.session_state:
     st.session_state.model_metrics = None
 if "model_target" not in st.session_state:
     st.session_state.model_target = "roas"
+if "model_mode" not in st.session_state:
+    st.session_state.model_mode = "MMM Light (ajánlott)"
 
 # ---------------------------------------------------------------------------
 # 🎯 MAIN TAB STRUCTURE
@@ -1056,7 +1120,7 @@ with tab3:
     st.caption("Megjegyzés: ez NEM a Google Meridian hivatalos MMM implementációja, hanem egy egyszerűsített (light) becslő modell.")
     model_mode = st.radio(
         "Tab3 mód",
-        ["MMM Light (ajánlott)", "Legacy neuromarketing"],
+        ["MMM Light (ajánlott)", "Meridian Advanced (beta)", "Legacy neuromarketing"],
         horizontal=True,
         key="tab3_mode",
     )
@@ -1213,14 +1277,30 @@ with tab3:
                 st.session_state.trained_model = (model, features)
                 st.session_state.model_metrics = {"rmse": rmse, "r2": r2, "nrmse": (rmse / max(df[target_col].mean(), 1e-9)) if target_col == "conversion_value" else rmse}
                 st.session_state.model_target = target_col
+                st.session_state.model_mode = model_mode
                 st.success(f"✅ MMM Light modell tanítva. Target: {target_col}")
+        elif model_mode.startswith("Meridian Advanced"):
+            if "conversion_value" not in df.columns or not df["conversion_value"].notna().any():
+                st.error("❌ Meridian Advanced módhoz szükséges a conversion_value oszlop.")
+            else:
+                payload = train_meridian_advanced(df)
+                st.session_state.trained_model = payload
+                st.session_state.model_metrics = {"rmse": payload["rmse"], "r2": payload["r2"], "nrmse": payload["rmse"] / max(payload["train_df"]["conversion_value"].mean(), 1e-9)}
+                st.session_state.model_target = "conversion_value"
+                st.session_state.model_mode = model_mode
+                st.success("✅ Meridian Advanced (beta) modell tanítva.")
         else:
             model, rmse, r2, features = train_model(df)
             st.session_state.trained_model = (model, features)
             st.session_state.model_metrics = {"rmse": rmse, "r2": r2, "nrmse": rmse}
             st.session_state.model_target = "roas"
+            st.session_state.model_mode = model_mode
     elif st.session_state.trained_model:
-        model, features = st.session_state.trained_model
+        if isinstance(st.session_state.trained_model, dict):
+            model = st.session_state.trained_model
+            features = st.session_state.trained_model.get("features", [])
+        else:
+            model, features = st.session_state.trained_model
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("📈 Model Teljesítmény")
@@ -1255,8 +1335,24 @@ with tab3:
     if model_metrics and st.session_state.get("model_target") == "conversion_value":
         st.sidebar.caption(f"nRMSE: {model_metrics.get('nrmse', 0) * 100:.1f}%")
     
+    if isinstance(model, dict) and model.get("type") == "meridian_advanced":
+        st.markdown("---")
+        st.subheader("📐 Meridian Advanced (beta) diagnosztika")
+        contrib = model["contribution"].copy()
+        st.markdown("**Feature hozzájárulás (koefficiensek)**")
+        st.dataframe(contrib, use_container_width=True)
+        contrib_chart = contrib.set_index("feature")[["coef"]]
+        st.bar_chart(contrib_chart)
+
+        actual_vs_pred = model["train_df"][["month_period", "conversion_value"]].copy()
+        exog = sm.add_constant(model["train_df"][["spend_sat", "ctr", "cpc", "trend_idx"]], has_constant="add")
+        actual_vs_pred["predicted_value"] = model["model"].predict(exog)
+        actual_vs_pred = actual_vs_pred.set_index("month_period")[["conversion_value", "predicted_value"]]
+        st.markdown("**Tény vs becsült érték (havi)**")
+        st.line_chart(actual_vs_pred)
+
     st.markdown("---")
-    st.subheader("🎯 Manuális ROAS Előrejelzés")
+    st.subheader("🎯 Manuális előrejelzés")
     
     col1, col2 = st.columns(2)
     
@@ -1312,7 +1408,17 @@ with tab3:
             'ctr': ctr_manual / 100,
         }
         model_input = pd.DataFrame([{feature: all_input.get(feature, 0) for feature in features}])
-        prediction = model.predict(model_input)[0]
+        if isinstance(model, dict) and model.get("type") == "meridian_advanced":
+            base_df = model["train_df"]
+            trend_idx = float(base_df["trend_idx"].max() + 1) if not base_df.empty else 0.0
+            spend_adstock = (budget_manual + 0.5 * float(base_df["budget"].iloc[-1])) if not base_df.empty else budget_manual
+            spend_scale = float(base_df["spend_adstock"].max()) if not base_df.empty and float(base_df["spend_adstock"].max()) > 0 else max(budget_manual, 1)
+            spend_sat = 1 - np.exp(-2.0 * (spend_adstock / spend_scale))
+            exog_pred = pd.DataFrame({"spend_sat": [spend_sat], "ctr": [ctr_manual / 100], "cpc": [cpc_manual], "trend_idx": [trend_idx]})
+            exog_pred = sm.add_constant(exog_pred, has_constant="add")
+            prediction = float(model["model"].predict(exog_pred)[0])
+        else:
+            prediction = model.predict(model_input)[0]
         target_col = st.session_state.get("model_target", "roas")
 
         st.markdown("---")

@@ -1255,6 +1255,15 @@ with tab3:
 
     model = None
     features = None
+    mmm_margin_percent = st.slider(
+        "MMM Light árrés (%)",
+        min_value=5,
+        max_value=95,
+        value=int(st.session_state.get("mmm_margin_percent", 35)),
+        step=1,
+        help="Ügyfelenként megadható árrés. A modell ezt használja megtérülés alapú target képzéshez.",
+        key="mmm_margin_percent",
+    )
 
     if df is not None:
         # Platform encoding
@@ -1268,17 +1277,29 @@ with tab3:
 
         if model_mode.startswith("MMM Light"):
             mmm_features = [f for f in ["platform_encoded", "budget", "cpc", "ctr"] if f in df.columns]
-            target_col = "conversion_value" if "conversion_value" in df.columns and df["conversion_value"].notna().any() else "roas"
-            if target_col not in df.columns:
-                st.error("❌ MMM Light modellhez nincs target oszlop (conversion_value vagy roas).")
+            if "conversion_value" in df.columns and df["conversion_value"].notna().any():
+                margin_ratio = mmm_margin_percent / 100
+                df["target_margin_roas"] = (df["conversion_value"] * margin_ratio) / df["budget"].replace(0, np.nan)
+                df["target_margin_roas"] = df["target_margin_roas"].replace([np.inf, -np.inf], np.nan).fillna(0)
+                target_col = "target_margin_roas"
+                target_label = f"árrés-alapú ROAS ({mmm_margin_percent}% árrés)"
+            elif "roas" in df.columns and df["roas"].notna().any():
+                target_col = "roas"
+                target_label = "ROAS (mert conversion_value nem érhető el)"
+            else:
+                target_col = None
+                target_label = None
+
+            if not target_col:
+                st.error("❌ MMM Light modellhez nincs használható target oszlop (conversion_value vagy roas).")
             else:
                 model, rmse, r2 = train_regression_model(df, mmm_features, target_col)
                 features = mmm_features
                 st.session_state.trained_model = (model, features)
-                st.session_state.model_metrics = {"rmse": rmse, "r2": r2, "nrmse": (rmse / max(df[target_col].mean(), 1e-9)) if target_col == "conversion_value" else rmse}
+                st.session_state.model_metrics = {"rmse": rmse, "r2": r2, "nrmse": rmse}
                 st.session_state.model_target = target_col
                 st.session_state.model_mode = model_mode
-                st.success(f"✅ MMM Light modell tanítva. Target: {target_col}")
+                st.success(f"✅ MMM Light modell tanítva ({target_label}).")
         elif model_mode.startswith("Meridian Advanced"):
             if "conversion_value" not in df.columns or not df["conversion_value"].notna().any():
                 st.error("❌ Meridian Advanced módhoz szükséges a conversion_value oszlop.")

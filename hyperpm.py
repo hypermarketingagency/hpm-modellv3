@@ -884,7 +884,11 @@ with tab1:
 
 with tab2:
     st.markdown("### 🖼️ Fázis 2: Hirdetés Neuromarketing Analízis")
-    
+    st.caption(
+        "Tab2 a session-ben lévő aktuális modellel számol: ha Tab3-ban saját (pl. Tab1-ből normalizált) adaton tanítottál, "
+        "azt használja; ha még nincs tanított modell, automatikusan demo adatokkal tréningel."
+    )
+
     col1, col2 = st.columns(2)
     
     with col1:
@@ -1919,6 +1923,12 @@ with st.expander("ℹ️ Hogyan működik a modell?"):
     - **Budget**: Költségvetés - Nagyobb adspend = több impresszió
     - **CPC**: Kattintás ára - Platform határozza meg
     - **CTR**: Kattintási arány - Jó ad = 2-5% CTR
+
+    ### Tab2 működés (neuromarketing előrejelzés)
+
+    - A Tab2-ben futó ROAS kalkuláció az **aktuális session modelljét** használja.
+    - Ha Tab3-ban már tanítottál modellt (akár Tab1 normalizált adatokból), akkor a Tab2 ezt a modellt veszi át.
+    - Ha még nincs tanított modell, a Tab2 első futáskor **demo adatokkal auto-tréningel**.
 
     ### SARIMAX előrejelzés
 
